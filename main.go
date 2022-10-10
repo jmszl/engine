@@ -1,19 +1,14 @@
 package engine // import "m7s.live/engine/v4"
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 	"io/ioutil"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	. "github.com/logrusorgru/aurora"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -90,7 +85,12 @@ func Run(ctx context.Context, configFile string) (err error) {
 	// 使得RawConfig具备全量配置信息，用于合并到插件配置中
 	Engine.RawConfig = config.Struct2Config(EngineConfig.Engine)
 	log.With(zap.String("config", "global")).Debug("", zap.Any("config", EngineConfig))
-	go EngineConfig.Listen(Engine)
+	go func() {
+		err2 := EngineConfig.Listen(Engine)
+		if err2 != nil {
+			log.Fatalf("Engine Listen ERR", err2.Error())
+		}
+	}()
 	for name, plugin := range Plugins {
 		plugin.RawConfig = cg.GetChild(name)
 		if plugin.RawConfig != nil {
@@ -100,21 +100,21 @@ func Run(ctx context.Context, configFile string) (err error) {
 		}
 		plugin.assign()
 	}
-	UUID := uuid.NewString()
-	reportTimer := time.NewTicker(time.Minute)
-	contentBuf := bytes.NewBuffer(nil)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://logs-01.loggly.com/inputs/758a662d-f630-40cb-95ed-2502a5e9c872/tag/monibuca/", nil)
-	req.Header.Set("Content-Type", "application/json")
+	//UUID := uuid.NewString()
+	//reportTimer := time.NewTicker(time.Minute)
+	//contentBuf := bytes.NewBuffer(nil)
+	//req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://logs-01.loggly.com/inputs/758a662d-f630-40cb-95ed-2502a5e9c872/tag/monibuca/", nil)
+	//req.Header.Set("Content-Type", "application/json")
 	version := Engine.Version
 	if ver, ok := ctx.Value("version").(string); ok && ver != "" && ver != "dev" {
 		version = ver
 	}
 	log.Info(Blink("m7s@"+version), " start success")
-	content := fmt.Sprintf(`{"uuid":"%s","version":"%s","os":"%s","arch":"%s"`, UUID, version, runtime.GOOS, runtime.GOARCH)
+	//content := fmt.Sprintf(`{"uuid":"%s","version":"%s","os":"%s","arch":"%s"`, UUID, version, runtime.GOOS, runtime.GOARCH)
 	if EngineConfig.Secret != "" {
 		EngineConfig.OnEvent(ctx)
 	}
-	var c http.Client
+	//var c http.Client
 	for {
 		select {
 		case event := <-EventBus:
@@ -125,12 +125,12 @@ func Run(ctx context.Context, configFile string) (err error) {
 			}
 		case <-ctx.Done():
 			return
-		case <-reportTimer.C:
-			contentBuf.Reset()
-			postJson := fmt.Sprintf(`%s,"streams":%d}`, content, len(Streams.Map))
-			contentBuf.WriteString(postJson)
-			req.Body = ioutil.NopCloser(contentBuf)
-			c.Do(req)
+			//case <-reportTimer.C:
+			//	contentBuf.Reset()
+			//	postJson := fmt.Sprintf(`%s,"streams":%d}`, content, len(Streams.Map))
+			//	contentBuf.WriteString(postJson)
+			//	req.Body = ioutil.NopCloser(contentBuf)
+			//	c.Do(req)
 		}
 	}
 }
