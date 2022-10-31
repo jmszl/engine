@@ -26,9 +26,6 @@ func NewH265(stream IStream) (vt *H265) {
 	vt.Video.Media.Poll = time.Millisecond * 10 //适配高帧率
 	vt.Video.DecoderConfiguration.PayloadType = 96
 	vt.Video.DecoderConfiguration.Raw = make(NALUSlice, 3)
-	if config.Global.RTPReorder {
-		vt.Video.orderQueue = make([]*RTPFrame, 20)
-	}
 	vt.dtsEst = NewDTSEstimator()
 	return
 }
@@ -42,7 +39,9 @@ func (vt *H265) WriteAnnexB(pts uint32, dts uint32, frame AnnexBFrame) {
 	for _, slice := range vt.Video.WriteAnnexB(frame) {
 		vt.WriteSlice(slice)
 	}
-	vt.Flush()
+	if len(vt.Value.Raw) > 0 {
+		vt.Flush()
+	}
 }
 func (vt *H265) WriteSlice(slice NALUSlice) {
 	switch slice.H265Type() {
@@ -67,11 +66,17 @@ func (vt *H265) WriteSlice(slice NALUSlice) {
 		codec.NAL_UNIT_CODED_SLICE_IDR,
 		codec.NAL_UNIT_CODED_SLICE_IDR_N_LP,
 		codec.NAL_UNIT_CODED_SLICE_CRA:
-		vt.Video.Media.RingBuffer.Value.IFrame = true
-		vt.Video.Media.WriteSlice(slice)
-	case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, codec.NAL_UNIT_SEI:
-		vt.Video.Media.RingBuffer.Value.IFrame = false
-		vt.Video.Media.WriteSlice(slice)
+		vt.Value.IFrame = true
+		if vt.sei != nil {
+			vt.Video.WriteSlice(vt.sei)
+			vt.sei = nil
+		}
+		vt.Video.WriteSlice(slice)
+	case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9:
+		vt.Value.IFrame = false
+		vt.Video.WriteSlice(slice)
+	case codec.NAL_UNIT_SEI:
+		vt.sei = slice
 	default:
 		vt.Video.Stream.Warn("h265 slice type not supported", zap.Uint("type", uint(slice.H265Type())))
 	}
@@ -157,10 +162,10 @@ func (vt *H265) writeRTPFrame(frame *RTPFrame) {
 }
 func (vt *H265) Flush() {
 	if vt.Video.Media.RingBuffer.Value.IFrame {
-		if vt.Video.IDRing == nil {
-			defer vt.Video.Attach()
-		}
 		vt.Video.ComputeGOP()
+	}
+	if vt.Attached == 0 && vt.IDRing != nil && vt.DecoderConfiguration.Seq > 0 {
+		defer vt.Attach()
 	}
 	// RTP格式补完
 	// H265打包： https://blog.csdn.net/fanyun_01/article/details/114234290

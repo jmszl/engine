@@ -23,6 +23,7 @@ type Video struct {
 	idrCount    int  //缓存中包含的idr数量
 	dcChanged   bool //解码器配置是否改变了，一般由于变码率导致
 	dtsEst      *DTSEstimator
+	sei         NALUSlice
 }
 
 func (vt *Video) SnapForJson() {
@@ -49,10 +50,11 @@ func (vt *Video) GetDecConfSeq() int {
 }
 func (vt *Video) Attach() {
 	vt.Stream.AddTrack(vt)
+	vt.Attached = 1
 }
 func (vt *Video) Detach() {
 	vt.Stream.RemoveTrack(vt)
-	vt.Stream = nil
+	vt.Attached = 2
 }
 func (vt *Video) GetName() string {
 	if vt.Name == "" {
@@ -60,6 +62,7 @@ func (vt *Video) GetName() string {
 	}
 	return vt.Name
 }
+
 // PlayFullAnnexB 订阅annex-b格式的流数据，每一个I帧增加sps、pps头
 func (vt *Video) PlayFullAnnexB(ctx context.Context, onMedia func(net.Buffers) error) error {
 	for vr := vt.ReadRing(); ctx.Err() == nil; vr.MoveNext() {

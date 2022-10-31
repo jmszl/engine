@@ -26,9 +26,6 @@ func NewH264(stream IStream) (vt *H264) {
 	vt.Video.Media.Poll = time.Millisecond * 10 //适配高帧率
 	vt.Video.DecoderConfiguration.PayloadType = 96
 	vt.Video.DecoderConfiguration.Raw = make(NALUSlice, 2)
-	if config.Global.RTPReorder {
-		vt.Video.orderQueue = make([]*RTPFrame, 20)
-	}
 	vt.dtsEst = NewDTSEstimator()
 	return
 }
@@ -42,11 +39,13 @@ func (vt *H264) WriteAnnexB(pts uint32, dts uint32, frame AnnexBFrame) {
 	for _, slice := range vt.Video.WriteAnnexB(frame) {
 		vt.WriteSlice(slice)
 	}
+	if len(vt.Value.Raw) > 0 {
+		vt.Flush()
+	}
 	// println(vt.Value.DTS, vt.Value.PTS, vt.Value.PTS-vt.Value.DTS, len(frame))
-	vt.Flush()
+	// println(vt.FPS)
 }
 func (vt *H264) WriteSlice(slice NALUSlice) {
-	// println( slice.H264Type())
 	switch slice.H264Type() {
 	case codec.NALU_SPS:
 		vt.SPSInfo, _ = codec.ParseSPS(slice[0])
@@ -69,10 +68,16 @@ func (vt *H264) WriteSlice(slice NALUSlice) {
 		vt.Video.DecoderConfiguration.Seq++
 	case codec.NALU_IDR_Picture:
 		vt.Video.Media.RingBuffer.Value.IFrame = true
+		if vt.sei != nil {
+			vt.Video.WriteSlice(vt.sei)
+			vt.sei = nil
+		}
 		vt.Video.WriteSlice(slice)
-	case codec.NALU_Non_IDR_Picture,codec.NALU_SEI:
+	case codec.NALU_Non_IDR_Picture:
 		vt.Video.Media.RingBuffer.Value.IFrame = false
 		vt.Video.WriteSlice(slice)
+	case codec.NALU_SEI:
+		vt.sei = slice
 	}
 }
 
@@ -151,10 +156,10 @@ func (vt *H264) WriteRTP(raw []byte) {
 
 func (vt *H264) Flush() {
 	if vt.Video.Media.RingBuffer.Value.IFrame {
-		if vt.IDRing == nil {
-			defer vt.Attach()
-		}
 		vt.Video.ComputeGOP()
+	}
+	if vt.Attached == 0 && vt.IDRing != nil && vt.DecoderConfiguration.Seq > 0 {
+		defer vt.Attach()
 	}
 	// RTP格式补完
 	if vt.Video.Media.RingBuffer.Value.RTP == nil && config.Global.EnableRTP {

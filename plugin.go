@@ -107,11 +107,18 @@ func (opt *Plugin) assign() {
 			}
 		}
 	}
+	if opt == Engine {
+		opt.registerHandler()
+		return
+	}
 	if opt.RawConfig == nil {
 		opt.RawConfig = config.Config{}
 	} else if opt.RawConfig["enable"] == false {
 		opt.Warn("disabled")
 		return
+	} else if opt.RawConfig["enable"] == true {
+		//移除这个属性防止反序列化报错
+		delete(opt.RawConfig, "enable")
 	}
 	t := reflect.TypeOf(opt.Config).Elem()
 	// 用全局配置覆盖没有设置的配置
@@ -182,7 +189,7 @@ func (opt *Plugin) Save() error {
 		opt.saveTimer = time.AfterFunc(time.Second, func() {
 			lock.Lock()
 			defer lock.Unlock()
-			file, err := os.OpenFile(opt.settingPath(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+			file, err := os.OpenFile(opt.settingPath(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 			if err == nil {
 				defer file.Close()
 				err = yaml.NewEncoder(file).Encode(opt.Modified)

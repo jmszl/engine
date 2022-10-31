@@ -223,7 +223,10 @@ func (r *Stream) action(action StreamAction) (ok bool) {
 		switch next {
 		case STATE_WAITPUBLISH:
 			stateEvent = SEwaitPublish{event, r.Publisher}
-			waitTime := r.Publisher.GetConfig().WaitCloseTimeout
+			waitTime := 0
+			if r.Publisher != nil {
+				waitTime = r.Publisher.GetConfig().WaitCloseTimeout
+			}
 			if l := len(r.Subscribers); l > 0 {
 				r.broadcast(stateEvent)
 				if waitTime == 0 {
@@ -236,7 +239,7 @@ func (r *Stream) action(action StreamAction) (ok bool) {
 		case STATE_PUBLISHING:
 			stateEvent = SEpublish{event}
 			r.broadcast(stateEvent)
-			r.timeout.Reset(time.Second * 5) // 5秒心跳，检测track的存活度
+			r.timeout.Reset(time.Second * 10) // 5秒心跳，检测track的存活度
 		case STATE_WAITCLOSE:
 			stateEvent = SEwaitClose{event}
 			r.timeout.Reset(r.DelayCloseTimeout)
@@ -424,7 +427,9 @@ func (s *Stream) run() {
 						}
 						v.Resolve(util.Null)
 					} else {
-						s.Publisher = nil
+						if s.Publisher == v.Value {
+							s.Publisher = nil
+						}
 						v.Reject(BadNameErr)
 					}
 				case *util.Promise[ISubscriber, struct{}]:
