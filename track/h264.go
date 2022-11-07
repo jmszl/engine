@@ -8,7 +8,6 @@ import (
 	"go.uber.org/zap"
 	"m7s.live/engine/v4/codec"
 	. "m7s.live/engine/v4/common"
-	"m7s.live/engine/v4/config"
 	"m7s.live/engine/v4/util"
 )
 
@@ -162,35 +161,39 @@ func (vt *H264) Flush() {
 		defer vt.Attach()
 	}
 	// RTP格式补完
-	if vt.Video.Media.RingBuffer.Value.RTP == nil && config.Global.EnableRTP {
-		var out [][]byte
-		for _, nalu := range vt.Video.Media.RingBuffer.Value.Raw {
+	if vt.ComplementRTP() {
+		var out []net.Buffers
+		if vt.Value.IFrame {
+			out = append(out, net.Buffers(vt.DecoderConfiguration.Raw))
+		}
+
+		for _, nalu := range vt.Value.Raw {
 			buffers := util.SplitBuffers(nalu, 1200)
 			firstBuffer := NALUSlice(buffers[0])
 			if l := len(buffers); l == 1 {
-				out = append(out, firstBuffer.Bytes())
+				out = append(out, net.Buffers(firstBuffer))
 			} else {
 				naluType := firstBuffer.H264Type()
 				firstByte := codec.NALU_FUA.Or(firstBuffer.RefIdc())
-				buf := []byte{firstByte, naluType.Or(1 << 7)}
+				buf := net.Buffers{[]byte{firstByte, naluType.Or(1 << 7)}}
 				for i, sp := range firstBuffer {
 					if i == 0 {
 						sp = sp[1:]
 					}
-					buf = append(buf, sp...)
+					buf = append(buf, sp)
 				}
 				out = append(out, buf)
 				for _, bufs := range buffers[1:] {
-					buf := []byte{firstByte, naluType.Byte()}
+					buf = net.Buffers{[]byte{firstByte, naluType.Byte()}}
 					for _, sp := range bufs {
-						buf = append(buf, sp...)
+						buf = append(buf, sp)
 					}
 					out = append(out, buf)
 				}
-				lastBuf := out[len(out)-1]
-				lastBuf[1] |= 1 << 6 // set end bit
+				buf[0][1] |= 1 << 6 // set end bit
 			}
 		}
+
 		vt.PacketizeRTP(out...)
 	}
 	vt.Video.Flush()

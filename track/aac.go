@@ -8,7 +8,6 @@ import (
 	"go.uber.org/zap"
 	"m7s.live/engine/v4/codec"
 	. "m7s.live/engine/v4/common"
-	"m7s.live/engine/v4/config"
 	"m7s.live/engine/v4/util"
 )
 
@@ -94,19 +93,15 @@ func (aac *AAC) Flush() {
 	// RTP格式补完
 	// TODO: MTU 分割
 	value := aac.Audio.Media.RingBuffer.Value
-	if value.RTP == nil && config.Global.EnableRTP {
+	if aac.ComplementRTP() {
 		l := util.SizeOfBuffers(value.Raw)
-		o := make([]byte, 4, l+4)
+		var packet = make(net.Buffers, len(value.Raw)+1)
 		//AU_HEADER_LENGTH,因为单位是bit, 除以8就是auHeader的字节长度；又因为单个auheader字节长度2字节，所以再除以2就是auheader的个数。
-		o[0] = 0x00 //高位
-		o[1] = 0x10 //低位
-		//AU_HEADER
-		o[2] = (byte)((l & 0x1fe0) >> 5) //高位
-		o[3] = (byte)((l & 0x1f) << 3)   //低位
-		for _, raw := range value.Raw {
-			o = append(o, raw...)
+		packet[0] = []byte{0x00, 0x10, (byte)((l & 0x1fe0) >> 5), (byte)((l & 0x1f) << 3)}
+		for i, raw := range value.Raw {
+			packet[i+1] = raw
 		}
-		aac.PacketizeRTP(o)
+		aac.PacketizeRTP(packet)
 	}
 	aac.Audio.Flush()
 }

@@ -5,7 +5,6 @@ import (
 
 	"m7s.live/engine/v4/codec"
 	. "m7s.live/engine/v4/common"
-	"m7s.live/engine/v4/config"
 )
 
 var adcflv1 = []byte{codec.FLV_TAG_TYPE_AUDIO, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0}
@@ -25,7 +24,7 @@ type Audio struct {
 	Profile byte
 }
 
-//为json序列化而计算的数据
+// 为json序列化而计算的数据
 func (a *Audio) SnapForJson() {
 	v := a.LastValue
 	if a.RawPart != nil {
@@ -96,19 +95,19 @@ func (av *Audio) WriteAVCC(ts uint32, frame AVCCFrame) {
 
 func (a *Audio) Flush() {
 	// AVCC 格式补完
-	value := &a.Media.RingBuffer.Value
-	if len(value.AVCC) == 0 && (config.Global.EnableAVCC) {
+	value := &a.Value
+	if a.ComplementAVCC() {
 		value.AppendAVCC(a.AVCCHead)
 		for _, raw := range value.Raw {
 			value.AppendAVCC(raw)
 		}
 	}
-	if value.RTP == nil && config.Global.EnableRTP {
-		var o []byte
-		for _, raw := range value.Raw {
-			o = append(o, raw...)
+	if a.ComplementRTP() {
+		var packet = make(net.Buffers, len(value.Raw))
+		for i, raw := range value.Raw {
+			packet[i] = raw
 		}
-		a.PacketizeRTP(o)
+		a.PacketizeRTP(packet)
 	}
 	a.Media.Flush()
 }

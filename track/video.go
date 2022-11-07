@@ -9,7 +9,6 @@ import (
 	"go.uber.org/zap"
 	"m7s.live/engine/v4/codec"
 	. "m7s.live/engine/v4/common"
-	"m7s.live/engine/v4/config"
 	"m7s.live/engine/v4/util"
 )
 
@@ -99,7 +98,7 @@ func (vt *Video) ComputeGOP() {
 				if v.IFrame {
 					vt.idrCount--
 				}
-				v.Reset()
+				v.Clear()
 			})
 		}
 	}
@@ -162,7 +161,7 @@ func (vt *Video) Flush() {
 		return
 	}
 	// AVCC格式补完
-	if len(rv.AVCC) == 0 && (config.Global.EnableAVCC) {
+	if vt.ComplementAVCC() {
 		var b util.Buffer
 		if cap(rv.AVCC) > 0 {
 			if avcc := rv.AVCC[:1]; len(avcc[0]) == 5 {
@@ -200,13 +199,7 @@ func (vt *Video) Flush() {
 	}
 	vt.Media.Flush()
 }
-func (vt *Video) PacketizeRTP(payloads ...[]byte) {
-	if vt.AVRing.RingBuffer.Value.IFrame && vt.dcChanged {
-		vt.dcChanged = false
-		payloads = append(append([][]byte{}, vt.DecoderConfiguration.Raw...), payloads...)
-	}
-	vt.Media.PacketizeRTP(payloads...)
-}
+
 func (vt *Video) ReadRing() *AVRing[NALUSlice] {
 	vr := vt.Media.ReadRing()
 	vr.Ring = vt.IDRing
