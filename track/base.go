@@ -2,8 +2,8 @@ package track
 
 import (
 	"context"
-	"net"
 	"time"
+	"unsafe"
 
 	. "m7s.live/engine/v4/common"
 	"m7s.live/engine/v4/config"
@@ -45,11 +45,17 @@ type Media[T RawSlice] struct {
 	Base
 	AVRing[T]
 	SampleRate           uint32
+	SSRC                 uint32
 	DecoderConfiguration DecoderConfiguration[T] `json:"-"` //H264(SPS、PPS) H265(VPS、SPS、PPS) AAC(config)
 	// util.BytesPool                               //无锁内存池，用于发布者（在同一个协程中）复用小块的内存，通常是解包时需要临时使用
 	RTPMuxer
 	RTPDemuxer
 	流速控制
+}
+
+func (av *Media[T]) Init(n int) {
+	av.AVRing.Init(n)
+	av.SSRC = uint32(uintptr(unsafe.Pointer(av)))
 }
 
 func (av *Media[T]) LastWriteTime() time.Time {
@@ -128,7 +134,7 @@ func (av *Media[T]) ComplementRTP() bool {
 
 // https://www.cnblogs.com/moonwalk/p/15903760.html
 // Packetize packetizes the payload of an RTP packet and returns one or more RTP packets
-func (av *Media[T]) PacketizeRTP(payloads ...net.Buffers) {
+func (av *Media[T]) PacketizeRTP(payloads ...[][]byte) {
 	packetCount := len(payloads)
 	if cap(av.Value.RTP) < packetCount {
 		av.Value.RTP = make([]*RTPFrame, packetCount)
@@ -144,7 +150,7 @@ func (av *Media[T]) PacketizeRTP(payloads ...net.Buffers) {
 			packet.Version = 2
 			packet.PayloadType = av.DecoderConfiguration.PayloadType
 			packet.Payload = make([]byte, 0, 1200)
-			packet.SSRC = av.Stream.SSRC()
+			packet.SSRC = av.SSRC
 		}
 		packet.Payload = packet.Payload[:0]
 		packet.SequenceNumber = av.rtpSequence

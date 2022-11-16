@@ -66,17 +66,16 @@ func (vt *H264) WriteSlice(slice NALUSlice) {
 		vt.Video.DecoderConfiguration.FLV = codec.VideoAVCC2FLV(vt.Video.DecoderConfiguration.AVCC, 0)
 		vt.Video.DecoderConfiguration.Seq++
 	case codec.NALU_IDR_Picture:
-		vt.Video.Media.RingBuffer.Value.IFrame = true
-		if vt.sei != nil {
-			vt.Video.WriteSlice(vt.sei)
-			vt.sei = nil
-		}
+		vt.Value.IFrame = true
 		vt.Video.WriteSlice(slice)
-	case codec.NALU_Non_IDR_Picture:
-		vt.Video.Media.RingBuffer.Value.IFrame = false
+	case codec.NALU_Non_IDR_Picture,
+		codec.NALU_Data_Partition_A,
+		codec.NALU_Data_Partition_B,
+		codec.NALU_Data_Partition_C:
+		vt.Value.IFrame = false
 		vt.Video.WriteSlice(slice)
 	case codec.NALU_SEI:
-		vt.sei = slice
+		vt.Value.SEI = slice
 	}
 }
 
@@ -162,20 +161,19 @@ func (vt *H264) Flush() {
 	}
 	// RTP格式补完
 	if vt.ComplementRTP() {
-		var out []net.Buffers
+		var out [][][]byte
 		if vt.Value.IFrame {
-			out = append(out, net.Buffers(vt.DecoderConfiguration.Raw))
+			out = append(out, [][]byte{vt.DecoderConfiguration.Raw[0]}, [][]byte{vt.DecoderConfiguration.Raw[1]})
 		}
-
 		for _, nalu := range vt.Value.Raw {
 			buffers := util.SplitBuffers(nalu, 1200)
 			firstBuffer := NALUSlice(buffers[0])
 			if l := len(buffers); l == 1 {
-				out = append(out, net.Buffers(firstBuffer))
+				out = append(out, firstBuffer)
 			} else {
 				naluType := firstBuffer.H264Type()
 				firstByte := codec.NALU_FUA.Or(firstBuffer.RefIdc())
-				buf := net.Buffers{[]byte{firstByte, naluType.Or(1 << 7)}}
+				buf := [][]byte{{firstByte, naluType.Or(1 << 7)}}
 				for i, sp := range firstBuffer {
 					if i == 0 {
 						sp = sp[1:]
@@ -184,10 +182,7 @@ func (vt *H264) Flush() {
 				}
 				out = append(out, buf)
 				for _, bufs := range buffers[1:] {
-					buf = net.Buffers{[]byte{firstByte, naluType.Byte()}}
-					for _, sp := range bufs {
-						buf = append(buf, sp)
-					}
+					buf = append([][]byte{{firstByte, naluType.Byte()}}, bufs...)
 					out = append(out, buf)
 				}
 				buf[0][1] |= 1 << 6 // set end bit

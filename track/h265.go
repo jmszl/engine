@@ -66,16 +66,12 @@ func (vt *H265) WriteSlice(slice NALUSlice) {
 		codec.NAL_UNIT_CODED_SLICE_IDR_N_LP,
 		codec.NAL_UNIT_CODED_SLICE_CRA:
 		vt.Value.IFrame = true
-		if vt.sei != nil {
-			vt.Video.WriteSlice(vt.sei)
-			vt.sei = nil
-		}
 		vt.Video.WriteSlice(slice)
 	case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9:
 		vt.Value.IFrame = false
 		vt.Video.WriteSlice(slice)
 	case codec.NAL_UNIT_SEI:
-		vt.sei = slice
+		vt.Value.SEI = slice
 	default:
 		vt.Video.Stream.Warn("h265 slice type not supported", zap.Uint("type", uint(slice.H265Type())))
 	}
@@ -170,19 +166,19 @@ func (vt *H265) Flush() {
 	// RTP格式补完
 	// H265打包： https://blog.csdn.net/fanyun_01/article/details/114234290
 	if vt.ComplementRTP() {
-		var out []net.Buffers
+		var out [][][]byte
 		if vt.Value.IFrame {
-			out = append(out, net.Buffers(vt.DecoderConfiguration.Raw))
+			out = append(out, [][]byte{vt.DecoderConfiguration.Raw[0]}, [][]byte{vt.DecoderConfiguration.Raw[1]}, [][]byte{vt.DecoderConfiguration.Raw[2]})
 		}
 		for _, nalu := range vt.Video.Media.RingBuffer.Value.Raw {
 			buffers := util.SplitBuffers(nalu, 1200)
 			firstBuffer := NALUSlice(buffers[0])
 			if l := len(buffers); l == 1 {
-				out = append(out, net.Buffers(firstBuffer))
+				out = append(out, firstBuffer)
 			} else {
 				naluType := firstBuffer.H265Type()
 				firstByte := (byte(codec.NAL_UNIT_RTP_FU) << 1) | (firstBuffer[0][0] & 0b10000001)
-				buf := net.Buffers{[]byte{firstByte, firstBuffer[0][1], (1 << 7) | byte(naluType)}}
+				buf := [][]byte{{firstByte, firstBuffer[0][1], (1 << 7) | byte(naluType)}}
 				for i, sp := range firstBuffer {
 					if i == 0 {
 						sp = sp[2:]
@@ -191,10 +187,7 @@ func (vt *H265) Flush() {
 				}
 				out = append(out, buf)
 				for _, bufs := range buffers[1:] {
-					buf = net.Buffers{[]byte{firstByte, firstBuffer[0][1], byte(naluType)}}
-					for _, sp := range bufs {
-						buf = append(buf, sp)
-					}
+					buf = append([][]byte{{firstByte, firstBuffer[0][1], byte(naluType)}}, bufs...)
 					out = append(out, buf)
 				}
 				buf[0][2] |= 1 << 6 // set end bit
