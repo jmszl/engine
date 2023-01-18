@@ -27,9 +27,6 @@ type RawSlice interface {
 	~[][]byte | ~[]byte
 }
 
-//	func (nalu *H264NALU) Append(slice ...NALUSlice) {
-//		*nalu = append(*nalu, slice...)
-//	}
 func (nalu NALUSlice) H264Type() (naluType codec.H264NALUType) {
 	return naluType.Parse(nalu[0][0])
 }
@@ -205,6 +202,5 @@ type DecoderConfiguration[T RawSlice] struct {
 	PayloadType byte
 	AVCC        net.Buffers
 	Raw         T
-	FLV         net.Buffers
 	Seq         int //收到第几个序列帧，用于变码率时让订阅者发送序列帧
 }

@@ -2,7 +2,6 @@ package engine
 
 import (
 	"encoding/json"
-	"errors"
 	"sort"
 	"strings"
 	"sync"
@@ -23,7 +22,7 @@ type StreamAction byte
 type StateEvent struct {
 	Action StreamAction
 	From   StreamState
-	Stream *Stream
+	Stream *Stream `json:"-"`
 }
 
 func (se StateEvent) Next() (next StreamState, ok bool) {
@@ -46,6 +45,9 @@ type SEclose struct {
 }
 
 type SEKick struct {
+}
+type UnsubscribeEvent struct {
+	Subscriber ISubscriber
 }
 
 // 四状态机
@@ -168,11 +170,11 @@ type Stream struct {
 	Path        string
 	Publisher   IPublisher
 	State       StreamState
-	Subscribers []ISubscriber // 订阅者
+	StateEvent  StateEvent  // 进入当前状态的事件
+	Subscribers Subscribers // 订阅者
 	Tracks      Tracks
 	AppName     string
 	StreamName  string
-	CloseReason StreamAction //流关闭原因
 }
 type StreamSummay struct {
 	Path        string
@@ -187,7 +189,7 @@ type StreamSummay struct {
 // Summary 返回流的简要信息
 func (s *Stream) Summary() (r StreamSummay) {
 	if s.Publisher != nil {
-		r.Type = s.Publisher.GetIO().Type
+		r.Type = s.Publisher.GetPublisher().Type
 	}
 	r.Tracks = util.MapList(&s.Tracks.Map, func(name string, t Track) string {
 		b := t.GetBase()
@@ -196,7 +198,7 @@ func (s *Stream) Summary() (r StreamSummay) {
 	})
 	r.Path = s.Path
 	r.State = s.State
-	r.Subscribers = len(s.Subscribers)
+	r.Subscribers = s.Subscribers.Len()
 	r.StartTime = s.StartTime
 	return
 }
@@ -221,28 +223,25 @@ func findOrCreateStream(streamPath string, waitTimeout time.Duration) (s *Stream
 			AppName:    p[0],
 			StreamName: util.LastElement(p),
 			StartTime:  time.Now(),
+			timeout:    time.NewTimer(waitTimeout),
 		}
+		s.Subscribers.Init()
 		s.Logger = log.With(zap.String("stream", streamPath))
 		s.Info("created")
 		Streams.Map[streamPath] = s
-
 		s.actionChan.Init(1)
-		s.timeout = time.NewTimer(waitTimeout)
 		s.Tracks.Init()
 		go s.run()
 		return s, true
 	}
 }
-func (r *Stream) broadcast(event any) {
-	for _, sub := range r.Subscribers {
-		sub.OnEvent(event)
-	}
-}
+
 func (r *Stream) action(action StreamAction) (ok bool) {
 	event := StateEvent{action, r.State, r}
 	var next StreamState
 	if next, ok = event.Next(); ok {
 		r.State = next
+		r.StateEvent = event
 		// 给Publisher状态变更的回调，方便进行远程拉流等操作
 		var stateEvent any
 		r.Info(Sprintf("%s%s%s", StateNames[event.From], Yellow("->"), StateNames[next]), zap.String("action", ActionNames[action]))
@@ -251,12 +250,14 @@ func (r *Stream) action(action StreamAction) (ok bool) {
 			stateEvent = SEwaitPublish{event, r.Publisher}
 			waitTime := 0
 			if r.Publisher != nil {
-				waitTime = r.Publisher.GetConfig().WaitCloseTimeout
+				waitTime = r.Publisher.GetPublisher().Config.WaitCloseTimeout
 			}
-			if l := len(r.Subscribers); l > 0 {
-				r.broadcast(stateEvent)
+			r.Subscribers.OnPublisherLost(event)
+			suber := r.Subscribers.Pick()
+			if suber != nil {
+				r.Subscribers.Broadcast(stateEvent)
 				if waitTime == 0 {
-					waitTime = r.Subscribers[l-1].GetConfig().WaitTimeout
+					waitTime = suber.GetSubscriber().Config.WaitTimeout
 				}
 			} else if waitTime == 0 {
 				waitTime = 1 //没有订阅者也没有配置发布者等待重连时间，默认1秒后关闭流
@@ -264,20 +265,18 @@ func (r *Stream) action(action StreamAction) (ok bool) {
 			r.timeout.Reset(util.Second2Duration(waitTime))
 		case STATE_PUBLISHING:
 			stateEvent = SEpublish{event}
-			r.broadcast(stateEvent)
-			r.timeout.Reset(time.Second * 10) // 5秒心跳，检测track的存活度
+			r.Subscribers.Broadcast(stateEvent)
+			r.timeout.Reset(r.PublishTimeout) // 5秒心跳，检测track的存活度
 		case STATE_WAITCLOSE:
 			stateEvent = SEwaitClose{event}
 			r.timeout.Reset(r.DelayCloseTimeout)
 		case STATE_CLOSED:
-			r.CloseReason = action
 			for !r.actionChan.Close() {
 				// 等待channel发送完毕
 				time.Sleep(time.Millisecond * 100)
 			}
 			stateEvent = SEclose{event}
-			r.broadcast(stateEvent)
-			r.Subscribers = nil
+			r.Subscribers.Broadcast(stateEvent)
 			Streams.Delete(r.Path)
 			r.timeout.Stop()
 		}
@@ -292,7 +291,7 @@ func (r *Stream) action(action StreamAction) (ok bool) {
 }
 
 func (r *Stream) IsShutdown() bool {
-	return r.CloseReason == ACTION_CLOSE
+	return r.StateEvent.Action == ACTION_CLOSE || (r.StateEvent.Action == ACTION_TIMEOUT && r.StateEvent.From == STATE_WAITCLOSE)
 }
 
 func (r *Stream) IsClosed() bool {
@@ -302,136 +301,61 @@ func (r *Stream) IsClosed() bool {
 	return r.State == STATE_CLOSED
 }
 
-func (s *Stream) Close() {
-	s.Receive(ACTION_CLOSE)
+func (r *Stream) Close() {
+	r.Receive(ACTION_CLOSE)
 }
 
 func (s *Stream) Receive(event any) bool {
+	if s.IsClosed() {
+		return false
+	}
 	return s.actionChan.Send(event)
 }
 
-type waitTrackNames []string
-
-// Waiting是否正在等待
-func (w waitTrackNames) Waiting() bool {
-	return w != nil
-}
-
-// Waitany 是否等待任意的
-func (w waitTrackNames) Waitany() bool {
-	return len(w) == 0
-}
-
-// Wait 设置需要等待的名称，空数组为等待任意的
-func (w *waitTrackNames) Wait(names ...string) {
-	if names == nil {
-		*w = make([]string, 0)
-	} else {
-		*w = names
+func (s *Stream) onSuberClose(sub ISubscriber) {
+	s.Subscribers.Delete(sub)
+	if s.Publisher != nil {
+		s.Publisher.OnEvent(sub) // 通知Publisher有订阅者离开，在回调中可以去获取订阅者数量
 	}
-}
-
-// StopWait 不再需要等待了
-func (w *waitTrackNames) StopWait() {
-	*w = nil
-}
-
-// Accept 检查名称是否在等待候选项中
-func (w *waitTrackNames) Accept(name string) bool {
-	if !w.Waiting() {
-		return false
-	}
-	if w.Waitany() {
-		w.StopWait()
-		return true
-	} else {
-		for _, n := range *w {
-			if n == name {
-				w.StopWait()
-				return true
-			}
-		}
-	}
-	return false
-}
-
-type waitTracks struct {
-	*util.Promise[ISubscriber, struct{}] // 等待中的Promise
-	audio                                waitTrackNames
-	video                                waitTrackNames
-	data                                 waitTrackNames
-}
-
-// NeedWait 是否需要等待Track
-func (w *waitTracks) NeedWait() bool {
-	return w.audio.Waiting() || w.video.Waiting() || w.data.Waiting()
-}
-
-// Accept 有新的Track来到，检查是否可以不再需要等待了
-func (w *waitTracks) Accept(t Track) bool {
-	suber := w.Promise.Value
-	switch t.(type) {
-	case *track.Audio:
-		if w.audio.Accept(t.GetBase().Name) {
-			suber.OnEvent(t)
-		}
-	case *track.Video:
-		if w.video.Accept(t.GetBase().Name) {
-			suber.OnEvent(t)
-		}
-	case *track.Data:
-		if w.data.Accept(t.GetBase().Name) {
-			suber.OnEvent(t)
-		}
-	}
-	if w.NeedWait() {
-		return false
-	} else {
-		w.Resolve(util.Null)
-		return true
+	if s.DelayCloseTimeout > 0 && s.Subscribers.Len() == 0 {
+		s.action(ACTION_LASTLEAVE)
 	}
 }
 
 // 流状态处理中枢，包括接收订阅发布指令等
 func (s *Stream) run() {
-	waitP := make(map[ISubscriber]waitTracks)
 	for {
 		select {
 		case <-s.timeout.C:
 			if s.State == STATE_PUBLISHING {
+				for sub := range s.Subscribers.internal {
+					if sub.IsClosed() {
+						delete(s.Subscribers.internal, sub)
+						s.Info("innersuber -1", zap.Int("remains", len(s.Subscribers.internal)))
+					}
+				}
+				for sub := range s.Subscribers.public {
+					if sub.IsClosed() {
+						s.onSuberClose(sub)
+					}
+				}
 				s.Tracks.ModifyRange(func(name string, t Track) {
 					// track 超过一定时间没有更新数据了
 					if lastWriteTime := t.LastWriteTime(); !lastWriteTime.IsZero() && time.Since(lastWriteTime) > s.PublishTimeout {
 						s.Warn("track timeout", zap.String("name", name), zap.Time("lastWriteTime", lastWriteTime), zap.Duration("timeout", s.PublishTimeout))
 						delete(s.Tracks.Map.Map, name)
-						s.broadcast(TrackRemoved{t})
+						s.Subscribers.Broadcast(TrackRemoved{t})
 					}
 				})
-				for l := len(s.Subscribers) - 1; l >= 0; l-- {
-					if sub := s.Subscribers[l]; sub.IsClosed() {
-						s.Subscribers = append(s.Subscribers[:l], s.Subscribers[l+1:]...)
-						s.Info("suber -1", zap.String("id", sub.GetIO().ID), zap.String("type", sub.GetIO().Type), zap.Int("remains", len(s.Subscribers)))
-						if s.Publisher != nil {
-							s.Publisher.OnEvent(sub) // 通知Publisher有订阅者离开，在回调中可以去获取订阅者数量
-						}
-						if l == 0 && s.DelayCloseTimeout > 0 {
-							s.action(ACTION_LASTLEAVE)
-						}
-					}
+				if s.State != STATE_PUBLISHING {
+					continue
 				}
 				if s.Tracks.Len() == 0 || (s.Publisher != nil && s.Publisher.IsClosed()) {
 					s.action(ACTION_PUBLISHLOST)
-					for suber, p := range waitP {
-						p.Reject(errors.New("publisher lost"))
-						delete(waitP, suber)
-					}
 				} else {
 					s.timeout.Reset(time.Second * 5)
 					//订阅者等待音视频轨道超时了，放弃等待，订阅成功
-					for suber, p := range waitP {
-						p.Resolve(util.Null)
-						delete(waitP, suber)
-					}
+					s.Subscribers.AbortWait()
 				}
 			} else {
 				s.Debug("timeout", zap.String("state", StateNames[s.State]))
@@ -440,42 +364,40 @@ func (s *Stream) run() {
 		case action, ok := <-s.actionChan.C:
 			if ok {
 				switch v := action.(type) {
-				case *util.Promise[IPublisher, struct{}]:
-					s.Publisher = v.Value
-					if s.action(ACTION_PUBLISH) {
-						io := v.Value.GetIO()
-						io.Spesic = v.Value
-						io.Stream = s
-						io.StartTime = time.Now()
-						io.Logger = s.With(zap.String("type", io.Type))
-						if io.ID != "" {
-							io.Logger = io.Logger.With(zap.String("ID", io.ID))
-						}
-						v.Resolve(util.Null)
-					} else {
-						if s.Publisher == v.Value {
-							s.Publisher = nil
-						}
-						v.Reject(BadNameErr)
-					}
-				case *util.Promise[ISubscriber, struct{}]:
+				case *util.Promise[IPublisher]:
 					if s.IsClosed() {
-						v.Reject(StreamIsClosedErr)
+						v.Reject(ErrStreamIsClosed)
+					}
+					republish := s.Publisher == v.Value // 重复发布
+					if !republish {
+						s.Publisher = v.Value
+					}
+					if s.action(ACTION_PUBLISH) || republish {
+						v.Resolve()
+					} else {
+						v.Reject(ErrBadName)
+					}
+				case *util.Promise[ISubscriber]:
+					if s.IsClosed() {
+						v.Reject(ErrStreamIsClosed)
 					}
 					suber := v.Value
-					io := suber.GetIO()
-					io.Spesic = suber
-					s.Subscribers = append(s.Subscribers, suber)
+					io := suber.GetSubscriber()
 					sbConfig := io.Config
-					var waits waitTracks
-					waits.Promise = v
+					waits := &waitTracks{
+						Promise: v,
+					}
 					if ats := io.Args.Get("ats"); ats != "" {
 						waits.audio.Wait(strings.Split(ats, ",")...)
+					} else if len(sbConfig.SubAudioTracks) > 0 {
+						waits.audio.Wait(sbConfig.SubAudioTracks...)
 					} else if sbConfig.SubAudio {
 						waits.audio.Wait()
 					}
 					if vts := io.Args.Get("vts"); vts != "" {
 						waits.video.Wait(strings.Split(vts, ",")...)
+					} else if len(sbConfig.SubVideoTracks) > 0 {
+						waits.video.Wait(sbConfig.SubVideoTracks...)
 					} else if sbConfig.SubVideo {
 						waits.video.Wait()
 					}
@@ -484,53 +406,30 @@ func (s *Stream) run() {
 					} else {
 						// waits.data.Wait()
 					}
-					io.Stream = s
-					io.StartTime = time.Now()
-					io.Logger = s.With(zap.String("type", io.Type))
-					if io.ID != "" {
-						io.Logger = io.Logger.With(zap.String("ID", io.ID))
-					}
-					s.Info("suber +1", zap.String("id", io.ID), zap.String("type", io.Type), zap.Int("remains", len(s.Subscribers)))
 					if s.Publisher != nil {
 						s.Publisher.OnEvent(v) // 通知Publisher有新的订阅者加入，在回调中可以去获取订阅者数量
-						pubConfig := s.Publisher.GetConfig()
-						if !pubConfig.PubAudio {
-							waits.audio.StopWait()
-						}
-						if !pubConfig.PubVideo {
-							waits.video.StopWait()
-						}
+						pubConfig := s.Publisher.GetPublisher().Config
 						s.Tracks.Range(func(name string, t Track) {
 							waits.Accept(t)
 						})
-					}
-					if waits.NeedWait() {
-						waitP[suber] = waits
-					} else {
-						v.Resolve(util.Null)
-					}
-					if len(s.Subscribers) == 1 {
-						s.action(ACTION_FIRSTENTER)
-					}
-				case Track:
-					name := v.GetBase().Name
-					if s.Tracks.Add(name, v) {
-						s.Info("track +1", zap.String("name", name))
-						for _, sub := range s.Subscribers {
-							if w, ok := waitP[sub]; ok {
-								if w.Accept(v) {
-									delete(waitP, sub)
-								}
-							} else {
-								sub.OnEvent(v)
-							}
+						if !pubConfig.PubAudio || s.Subscribers.waitAborted {
+							waits.audio.StopWait()
+						}
+						if !pubConfig.PubVideo || s.Subscribers.waitAborted {
+							waits.video.StopWait()
 						}
 					}
+					s.Subscribers.Add(suber, waits)
+					if s.Subscribers.Len() == 1 && s.State == STATE_WAITCLOSE {
+						s.action(ACTION_FIRSTENTER)
+					}
+				case ISubscriber:
+					s.onSuberClose(v)
 				case TrackRemoved:
 					name := v.GetBase().Name
 					if t, ok := s.Tracks.Delete(name); ok {
 						s.Info("track -1", zap.String("name", name))
-						s.broadcast(v)
+						s.Subscribers.Broadcast(t)
 						if s.Tracks.Len() == 0 {
 							s.action(ACTION_PUBLISHLOST)
 						}
@@ -538,16 +437,22 @@ func (s *Stream) run() {
 							dt.Dispose()
 						}
 					}
+				case Track:
+					if s.State == STATE_WAITPUBLISH {
+						s.action(ACTION_PUBLISH)
+					}
+					name := v.GetBase().Name
+					if s.Tracks.Add(name, v) {
+						s.Info("track +1", zap.String("name", name))
+						s.Subscribers.OnTrack(v)
+					}
 				case StreamAction:
 					s.action(v)
 				default:
 					s.Error("unknown action", zap.Any("action", action))
 				}
 			} else {
-				for sub, w := range waitP {
-					w.Reject(StreamIsClosedErr)
-					delete(waitP, sub)
-				}
+				s.Subscribers.Dispose()
 				s.Tracks.Range(func(_ string, t Track) {
 					if dt, ok := t.(*track.Data); ok {
 						dt.Dispose()

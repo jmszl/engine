@@ -48,6 +48,7 @@ func InstallPlugin(config config.Plugin) *Plugin {
 }
 
 type FirstConfig config.Config
+type DefaultYaml string
 
 // Plugin 插件信息
 type Plugin struct {
@@ -64,13 +65,13 @@ type Plugin struct {
 	saveTimer          *time.Timer //用于保存的时候的延迟，防抖
 }
 
-func (opt *Plugin) logHandler(pattern string, handler func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
-	return func(rw http.ResponseWriter, r *http.Request) {
+func (opt *Plugin) logHandler(pattern string, handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		opt.Debug("visit", zap.String("path", r.URL.String()), zap.String("remote", r.RemoteAddr))
-		handler(rw, r)
-	}
+		handler.ServeHTTP(rw, r)
+	})
 }
-func (opt *Plugin) handleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+func (opt *Plugin) handle(pattern string, handler http.Handler) {
 	if opt == nil {
 		return
 	}
@@ -80,31 +81,31 @@ func (opt *Plugin) handleFunc(pattern string, handler func(http.ResponseWriter, 
 	}
 	if ok {
 		opt.Debug("http handle added:" + pattern)
-		conf.HandleFunc(pattern, opt.logHandler(pattern, handler))
+		conf.Handle(pattern, opt.logHandler(pattern, handler))
 	}
 	if opt != Engine {
 		pattern = "/" + strings.ToLower(opt.Name) + pattern
 		opt.Debug("http handle added to engine:" + pattern)
-		apiList = append(apiList, pattern)
-		EngineConfig.HandleFunc(pattern, opt.logHandler(pattern, handler))
+		EngineConfig.Handle(pattern, opt.logHandler(pattern, handler))
 	}
+	apiList = append(apiList, pattern)
 }
 
 // 读取独立配置合并入总配置中
-// TODO: 覆盖逻辑有待商榷
 func (opt *Plugin) assign() {
 	f, err := os.Open(opt.settingPath())
 	defer f.Close()
 	if err == nil {
 		var b []byte
 		b, err = io.ReadAll(f)
-		opt.modifiedYaml = string(b)
-		if err = yaml.Unmarshal(b, &opt.Modified); err == nil {
-			if opt.RawConfig == nil {
-				opt.RawConfig = opt.Modified
-			} else {
-				opt.RawConfig.Assign(opt.Modified)
+		if err == nil {
+			opt.modifiedYaml = string(b)
+			if err = yaml.Unmarshal(b, &opt.Modified); err == nil {
+				err = yaml.Unmarshal(b, &opt.RawConfig)
 			}
+		}
+		if err != nil {
+			opt.Warn("assign config failed", zap.Error(err))
 		}
 	}
 	if opt == Engine {
@@ -150,6 +151,7 @@ func (opt *Plugin) run() {
 	if err != nil {
 		panic(err)
 	}
+	delete(opt.RawConfig, "defaultyaml")
 	opt.Debug("config", zap.Any("config", opt.Config))
 	// opt.RawConfig = config.Struct2Config(opt.Config)
 	if conf, ok := opt.Config.(config.HTTPConfig); ok {
@@ -174,7 +176,7 @@ func (opt *Plugin) registerHandler() {
 			if name != "ServeHTTP" {
 				patten = strings.ToLower(strings.ReplaceAll(name, "_", "/"))
 			}
-			opt.handleFunc(patten, handler)
+			opt.handle(patten, http.HandlerFunc(handler))
 		}
 	}
 }
@@ -210,18 +212,40 @@ func (opt *Plugin) Publish(streamPath string, pub IPublisher) error {
 	if !ok {
 		conf = EngineConfig
 	}
-	return pub.receive(streamPath, pub, conf.GetPublishConfig())
+	pub.GetPublisher().Config = conf.GetPublishConfig()
+	return pub.receive(streamPath, pub)
 }
 
+var ErrStreamNotExist = errors.New("stream not exist")
+
+// SubscribeExist 订阅已经存在的流
+func (opt *Plugin) SubscribeExist(streamPath string, sub ISubscriber) error {
+	opt.Info("subscribe exit", zap.String("path", streamPath))
+	path, _, _ := strings.Cut(streamPath, "?")
+	if !Streams.Has(path) {
+		opt.Warn("stream not exist", zap.String("path", streamPath))
+		return ErrStreamNotExist
+	}
+	conf, ok := opt.Config.(config.SubscribeConfig)
+	if !ok {
+		conf = EngineConfig
+	}
+	sub.GetSubscriber().Config = conf.GetSubscribeConfig()
+	return sub.receive(streamPath, sub)
+}
+
+// Subscribe 订阅一个流，如果流不存在则创建一个等待流
 func (opt *Plugin) Subscribe(streamPath string, sub ISubscriber) error {
 	opt.Info("subscribe", zap.String("path", streamPath))
 	conf, ok := opt.Config.(config.SubscribeConfig)
 	if !ok {
 		conf = EngineConfig
 	}
-	return sub.receive(streamPath, sub, conf.GetSubscribeConfig())
+	sub.GetSubscriber().Config = conf.GetSubscribeConfig()
+	return sub.receive(streamPath, sub)
 }
 
+// SubscribeBlock 阻塞订阅一个流，直到订阅结束
 func (opt *Plugin) SubscribeBlock(streamPath string, sub ISubscriber, t byte) (err error) {
 	if err = opt.Subscribe(streamPath, sub); err == nil {
 		sub.PlayBlock(t)
@@ -229,55 +253,64 @@ func (opt *Plugin) SubscribeBlock(streamPath string, sub ISubscriber, t byte) (e
 	return
 }
 
-var NoPullConfigErr = errors.New("no pull config")
+var ErrNoPullConfig = errors.New("no pull config")
 var Pullers sync.Map
 
-func (opt *Plugin) Pull(streamPath string, url string, puller IPuller, save bool) (err error) {
-	opt.Info("pull", zap.String("path", streamPath), zap.String("url", url))
+func (opt *Plugin) Pull(streamPath string, url string, puller IPuller, save int) (err error) {
+	zurl := zap.String("url", url)
+	opt.Info("pull", zap.String("path", streamPath), zurl)
 	defer func() {
 		if err != nil {
-			opt.Error("pull failed", zap.String("remoteURL", url), zap.Error(err))
+			opt.Error("pull failed", zurl, zap.Error(err))
 		}
 	}()
 	conf, ok := opt.Config.(config.PullConfig)
 	if !ok {
-		return NoPullConfigErr
+		return ErrNoPullConfig
 	}
 	pullConf := conf.GetPullConfig()
 
 	puller.init(streamPath, url, pullConf)
 
-	if err = puller.Connect(); err != nil {
-		return
-	}
-
-	if err = opt.Publish(streamPath, puller); err != nil {
-		return
-	}
-	Pullers.Store(puller, url)
 	go func() {
-		defer func() {
-			Pullers.Delete(puller)
-			opt.Info("stop pull", zap.String("remoteURL", url), zap.Error(err))
-		}()
-		for puller.Reconnect() {
-			if puller.Pull(); !puller.GetStream().IsShutdown() {
-				if err = puller.Connect(); err != nil {
+		Pullers.Store(puller, url)
+		defer Pullers.Delete(puller)
+		for opt.Info("start pull", zurl); puller.Reconnect(); opt.Warn("restart pull", zurl) {
+			if err = puller.Connect(); err != nil {
+				if err == io.EOF {
+					puller.GetPublisher().Stream.Close()
+					opt.Info("pull complete", zurl)
 					return
 				}
+				opt.Error("pull connect", zurl, zap.Error(err))
+				time.Sleep(time.Second * 5)
+			} else {
 				if err = opt.Publish(streamPath, puller); err != nil {
-					if Streams.Get(streamPath).Publisher != puller {
+					if puber := Streams.Get(streamPath).Publisher; puber != puller && puber != nil {
+						io := puber.GetPublisher()
+						opt.Error("puller is not publisher", zap.String("ID", io.ID), zap.String("Type", io.Type), zap.Error(err))
 						return
 					}
+					opt.Error("pull publish", zurl, zap.Error(err))
 				}
-			} else {
+				if err = puller.Pull(); err != nil && !puller.IsShutdown() {
+					opt.Error("pull", zurl, zap.Error(err))
+				}
+			}
+			if puller.IsShutdown() {
+				opt.Info("stop pull shutdown", zurl)
 				return
 			}
 		}
+		opt.Warn("stop pull stop reconnect", zurl)
 	}()
-
-	if save {
-		pullConf.AddPull(streamPath, url)
+	switch save {
+	case 1:
+		pullConf.AddPullOnStart(streamPath, url)
+	case 2:
+		pullConf.AddPullOnSub(streamPath, url)
+	}
+	if save > 0 {
 		if opt.Modified == nil {
 			opt.Modified = make(config.Config)
 		}
@@ -289,7 +322,7 @@ func (opt *Plugin) Pull(streamPath string, url string, puller IPuller, save bool
 	return
 }
 
-var NoPushConfigErr = errors.New("no push config")
+var ErrNoPushConfig = errors.New("no push config")
 var Pushers sync.Map
 
 func (opt *Plugin) Push(streamPath string, url string, pusher IPusher, save bool) (err error) {
@@ -302,39 +335,35 @@ func (opt *Plugin) Push(streamPath string, url string, pusher IPusher, save bool
 	}()
 	conf, ok := opt.Config.(config.PushConfig)
 	if !ok {
-		return NoPushConfigErr
+		return ErrNoPushConfig
 	}
 	pushConfig := conf.GetPushConfig()
 
 	pusher.init(streamPath, url, pushConfig)
 
-	if err = pusher.Connect(); err != nil {
-		return
-	}
-
-	if err = opt.Subscribe(streamPath, pusher); err != nil {
-		return
-	}
-	Pushers.Store(url, pusher)
 	go func() {
-		defer opt.Info("push finished", zp, zu)
+		Pushers.Store(url, pusher)
 		defer Pushers.Delete(url)
-		for pusher.Reconnect() {
-			opt.Info("start push", zp, zu)
-			if err = pusher.Push(); !pusher.IsClosed() {
-				if err != nil {
-					opt.Info("stop push", zp, zu, zap.Error(err))
-				}
-				if err = pusher.Connect(); err != nil {
-					return
-				}
-				if err = opt.Subscribe(streamPath, pusher); err != nil {
-					return
-				}
+		for opt.Info("start push", zp, zu); pusher.Reconnect(); opt.Warn("restart push", zp, zu) {
+			if err = opt.Subscribe(streamPath, pusher); err != nil {
+				opt.Error("push subscribe", zp, zu, zap.Error(err))
+				time.Sleep(time.Second * 5)
 			} else {
+				if err = pusher.Connect(); err != nil {
+					opt.Error("push connect", zp, zu, zap.Error(err))
+					time.Sleep(time.Second * 5)
+				} else {
+					if err = pusher.Push(); err != nil && !pusher.IsShutdown() {
+						opt.Error("push", zp, zu, zap.Error(err))
+					}
+				}
+			}
+			if pusher.IsShutdown() {
+				opt.Info("stop push shutdown", zp, zu)
 				return
 			}
 		}
+		opt.Warn("stop push stop reconnect", zp, zu)
 	}()
 
 	if save {

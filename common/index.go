@@ -73,6 +73,7 @@ type AVTrack interface {
 	WriteRTP([]byte)
 	WriteRTPPack(*rtp.Packet)
 	Flush()
+	SetSpeedLimit(int)
 }
 type VideoTrack interface {
 	AVTrack
@@ -81,6 +82,7 @@ type VideoTrack interface {
 	PreFrame() *AVFrame[NALUSlice]
 	WriteSlice(NALUSlice)
 	WriteAnnexB(uint32, uint32, AnnexBFrame)
+	SetLostFlag()
 }
 
 type AudioTrack interface {

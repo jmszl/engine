@@ -22,6 +22,7 @@ type Video struct {
 	idrCount    int  //缓存中包含的idr数量
 	dcChanged   bool //解码器配置是否改变了，一般由于变码率导致
 	dtsEst      *DTSEstimator
+	lostFlag    bool // 是否丢帧
 }
 
 func (vt *Video) SnapForJson() {
@@ -137,12 +138,23 @@ func (vt *Video) WriteAnnexB(frame AnnexBFrame) (s []NALUSlice) {
 	}
 	return
 }
+
+
 func (vt *Video) WriteAVCC(ts uint32, frame AVCCFrame) {
 	vt.Media.WriteAVCC(ts, frame)
 	for nalus := frame[5:]; len(nalus) > vt.nalulenSize; {
 		nalulen := util.ReadBE[int](nalus[:vt.nalulenSize])
+		if nalulen == 0 {
+			vt.Stream.Warn("WriteAVCC with nalulen=0", zap.Int("len", len(nalus)))
+			return
+		}
 		if end := nalulen + vt.nalulenSize; len(nalus) >= end {
-			vt.AVRing.RingBuffer.Value.AppendRaw(NALUSlice{nalus[vt.nalulenSize:end]})
+			slice := nalus[vt.nalulenSize:end]
+			if _rawSlice := util.MallocSlice(&vt.AVRing.Value.Raw); _rawSlice == nil {
+				vt.Value.AppendRaw(NALUSlice{slice})
+			} else {
+				_rawSlice.Reset().Append(slice)
+			}
 			nalus = nalus[end:]
 		} else {
 			vt.Stream.Error("WriteAVCC", zap.Int("len", len(nalus)), zap.Int("naluLenSize", vt.nalulenSize), zap.Int("end", end))
@@ -151,18 +163,63 @@ func (vt *Video) WriteAVCC(ts uint32, frame AVCCFrame) {
 	}
 }
 
+// 在I帧前面插入sps pps webrtc需要
+func (av *Video) insertDCRtp() {
+	seq := av.Value.RTP[0].SequenceNumber
+	l1, l2 := len(av.DecoderConfiguration.Raw), len(av.Value.RTP)
+	afterLen := l1 + l2
+	if cap(av.Value.RTP) < afterLen {
+		rtps := make([]*RTPFrame, l1, afterLen)
+		av.Value.RTP = append(rtps, av.Value.RTP...)
+	} else {
+		av.Value.RTP = av.Value.RTP[:afterLen]
+		copy(av.Value.RTP[l1:], av.Value.RTP[:l2])
+	}
+	for i, nalu := range av.DecoderConfiguration.Raw {
+		packet := &RTPFrame{}
+		packet.Version = 2
+		packet.PayloadType = av.DecoderConfiguration.PayloadType
+		packet.Payload = nalu
+		packet.SSRC = av.SSRC
+		packet.SequenceNumber = seq
+		packet.Timestamp = av.Value.PTS
+		packet.Marker = false
+		seq++
+		av.rtpSequence++
+		av.Value.RTP[i] = packet
+	}
+	for i := l1; i < afterLen; i++ {
+		av.Value.RTP[i].SequenceNumber = seq
+		seq++
+	}
+}
+
 func (av *Video) generateTimestamp(ts uint32) {
 	av.AVRing.RingBuffer.Value.PTS = ts
 	av.AVRing.RingBuffer.Value.DTS = av.dtsEst.Feed(ts)
 }
 
+func (vt *Video) SetLostFlag() {
+	vt.lostFlag = true
+}
+
 func (vt *Video) Flush() {
-	rv := &vt.AVRing.RingBuffer.Value
+	rv := &vt.Value
 	// 没有实际媒体数据
 	if len(rv.Raw) == 0 {
 		rv.Reset()
 		return
 	}
+
+	if vt.lostFlag {
+		if rv.IFrame {
+			vt.lostFlag = false
+		} else {
+			rv.Reset()
+			return
+		}
+	}
+
 	// AVCC格式补完
 	if vt.ComplementAVCC() {
 		var b util.Buffer
@@ -201,6 +258,7 @@ func (vt *Video) Flush() {
 		}
 	}
 	vt.Media.Flush()
+	vt.dcChanged = false
 }
 
 func (vt *Video) ReadRing() *AVRing[NALUSlice] {

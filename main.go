@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"time"
@@ -40,7 +41,7 @@ var (
 	settingDir   = filepath.Join(ExecDir, ".m7s")           //配置缓存目录，该目录按照插件名称作为文件名存储修改过的配置
 	Engine       = InstallPlugin(EngineConfig)              //复用安装插件逻辑，将全局配置信息注入，并启动server
 	MergeConfigs = []string{"Publish", "Subscribe", "HTTP"} //需要合并配置的属性项，插件若没有配置则使用全局配置
-	EventBus     = make(chan any, 10)
+	EventBus     chan any
 	apiList      []string //注册到引擎的API接口列表
 )
 
@@ -93,13 +94,22 @@ func Run(ctx context.Context, configFile string) (err error) {
 	Engine.RawConfig = config.Struct2Config(EngineConfig.Engine)
 	Engine.assign()
 	log.With(zap.String("config", "global")).Debug("", zap.Any("config", EngineConfig))
+	EventBus = make(chan any, EngineConfig.EventBusSize)
 	go EngineConfig.Listen(Engine)
 	for name, plugin := range Plugins {
-		plugin.RawConfig = cg.GetChild(name)
-		if plugin.RawConfig != nil {
-			if b, err := yaml.Marshal(plugin.RawConfig); err == nil {
+		userConfig := cg.GetChild(name)
+		if userConfig != nil {
+			if b, err := yaml.Marshal(userConfig); err == nil {
 				plugin.Yaml = string(b)
 			}
+		}
+		if defaultYaml := reflect.ValueOf(plugin.Config).Elem().FieldByName("DefaultYaml"); defaultYaml.IsValid() {
+			if err := yaml.Unmarshal([]byte(defaultYaml.String()), &plugin.RawConfig); err != nil {
+				log.Error("parsing default config error:", err)
+			}
+		}
+		if plugin.Yaml != "" {
+			yaml.Unmarshal([]byte(plugin.Yaml), &plugin.RawConfig)
 		}
 		plugin.assign()
 	}

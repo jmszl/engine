@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"strings"
 
-	"go.uber.org/zap"
 	"m7s.live/engine/v4/log"
 )
 
@@ -103,7 +102,11 @@ func (config Config) Unmarshal(s any) {
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 				fv.SetInt(value.Int())
 			case reflect.Float32, reflect.Float64:
-				fv.SetFloat(value.Float())
+				if value.CanFloat() {
+					fv.SetFloat(value.Float())
+				} else {
+					fv.SetFloat(float64(value.Int()))
+				}
 			case reflect.Slice:
 				var s reflect.Value
 				if value.Kind() == reflect.Slice {
@@ -158,11 +161,11 @@ func (config Config) Merge(source Config) {
 			case Config:
 				m.Merge(v.(Config))
 			default:
-				log.Debug("merge", zap.String("k", k), zap.Any("v", v))
+				log.Debug("merge", k, v)
 				config[k] = v
 			}
 		} else {
-			log.Debug("exist", zap.String("k", k))
+			log.Debug("exist", k)
 		}
 	}
 }
