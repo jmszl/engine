@@ -117,7 +117,6 @@ type IIO interface {
 	Stop()
 	SetIO(any)
 	SetParentCtx(context.Context)
-	SetStuff(...any)
 	IsShutdown() bool
 }
 
@@ -128,11 +127,14 @@ func (io *IO) Stop() {
 	}
 }
 
-var ErrBadName = errors.New("Stream Already Exist")
-var ErrStreamIsClosed = errors.New("Stream Is Closed")
-var ErrPublisherLost = errors.New("Publisher Lost")
-var OnAuthSub func(p *util.Promise[ISubscriber]) error
-var OnAuthPub func(p *util.Promise[IPublisher]) error
+var (
+	ErrBadStreamName  = errors.New("Stream Already Exist")
+	ErrBadTrackName   = errors.New("Track Already Exist")
+	ErrStreamIsClosed = errors.New("Stream Is Closed")
+	ErrPublisherLost  = errors.New("Publisher Lost")
+	OnAuthSub         func(p *util.Promise[ISubscriber]) error
+	OnAuthPub         func(p *util.Promise[IPublisher]) error
+)
 
 // receive 用于接收发布或者订阅
 func (io *IO) receive(streamPath string, specific IIO) error {
@@ -145,7 +147,7 @@ func (io *IO) receive(streamPath string, specific IIO) error {
 	io.Args = u.Query()
 	wt := time.Second * 5
 	if v, ok := specific.(ISubscriber); ok {
-		wt = util.Second2Duration(v.GetSubscriber().Config.WaitTimeout)
+		wt = v.GetSubscriber().Config.WaitTimeout
 	}
 	if io.Context == nil {
 		io.Context, io.CancelFunc = context.WithCancel(Engine)
@@ -154,7 +156,7 @@ func (io *IO) receive(streamPath string, specific IIO) error {
 	s, create := findOrCreateStream(u.Path, wt)
 	Streams.Unlock()
 	if s == nil {
-		return ErrBadName
+		return ErrBadStreamName
 	}
 	io.Stream = s
 	io.Spesific = specific
@@ -178,11 +180,11 @@ func (io *IO) receive(streamPath string, specific IIO) error {
 			} else if oldPublisher == specific {
 				//断线重连
 			} else {
-				return ErrBadName
+				return ErrBadStreamName
 			}
 		}
-		s.PublishTimeout = util.Second2Duration(conf.PublishTimeout)
-		s.DelayCloseTimeout = util.Second2Duration(conf.DelayCloseTimeout)
+		s.PublishTimeout = conf.PublishTimeout
+		s.DelayCloseTimeout = conf.DelayCloseTimeout
 		defer func() {
 			if err == nil {
 				if oldPublisher == nil {

@@ -8,13 +8,11 @@ import (
 	"m7s.live/engine/v4/util"
 )
 
-type RTPWriter interface {
-	writeRTPFrame(frame *RTPFrame)
-}
+const RTPMTU = 1400
 
-func (av *Media[T]) UnmarshalRTPPacket(p *rtp.Packet) (frame *RTPFrame) {
-	if av.DecoderConfiguration.PayloadType != p.PayloadType {
-		av.Stream.Warn("RTP PayloadType error", zap.Uint8("want", av.DecoderConfiguration.PayloadType), zap.Uint8("got", p.PayloadType))
+func (av *Media) UnmarshalRTPPacket(p *rtp.Packet) (frame *RTPFrame) {
+	if av.PayloadType != p.PayloadType {
+		av.Warn("RTP PayloadType error", zap.Uint8("want", av.PayloadType), zap.Uint8("got", p.PayloadType))
 		return
 	}
 	frame = &RTPFrame{
@@ -24,35 +22,76 @@ func (av *Media[T]) UnmarshalRTPPacket(p *rtp.Packet) (frame *RTPFrame) {
 	return av.recorderRTP(frame)
 }
 
-func (av *Media[T]) UnmarshalRTP(raw []byte) (frame *RTPFrame) {
+func (av *Media) UnmarshalRTP(raw []byte) (frame *RTPFrame) {
 	var p rtp.Packet
 	err := p.Unmarshal(raw)
 	if err != nil {
-		av.Stream.Warn("RTP Unmarshal error", zap.Error(err))
+		av.Warn("RTP Unmarshal error", zap.Error(err))
 		return
 	}
 	return av.UnmarshalRTPPacket(&p)
 }
 
+func (av *Media) writeRTPFrame(frame *RTPFrame) {
+	av.Value.RTP.PushValue(*frame)
+	av.WriteRTPFrame(frame)
+	if frame.Marker {
+		if av.SampleRate != 90000 {
+			av.SpesificTrack.generateTimestamp(uint32(uint64(frame.Timestamp) * 90000 / uint64(av.SampleRate)))
+		} else {
+			av.SpesificTrack.generateTimestamp(frame.Timestamp)
+		}
+		av.SpesificTrack.Flush()
+	}
+}
+
 // WriteRTPPack 写入已反序列化的RTP包
-func (av *Media[T]) WriteRTPPack(p *rtp.Packet) {
+func (av *Media) WriteRTPPack(p *rtp.Packet) {
 	for frame := av.UnmarshalRTPPacket(p); frame != nil; frame = av.nextRTPFrame() {
 		av.writeRTPFrame(frame)
 	}
 }
 
 // WriteRTP 写入未反序列化的RTP包
-func (av *Media[T]) WriteRTP(raw []byte) {
+func (av *Media) WriteRTP(raw []byte) {
 	for frame := av.UnmarshalRTP(raw); frame != nil; frame = av.nextRTPFrame() {
 		av.writeRTPFrame(frame)
 	}
 }
 
+// https://www.cnblogs.com/moonwalk/p/15903760.html
+// Packetize packetizes the payload of an RTP packet and returns one or more RTP packets
+func (av *Media) PacketizeRTP(payloads ...[][]byte) {
+	packetCount := len(payloads)
+	for i, pp := range payloads {
+		av.rtpSequence++
+		rtpItem := av.rtpPool.Get()
+		packet := &rtpItem.Value
+		if packet.Payload == nil {
+			packet.Payload = make([]byte, 0, RTPMTU)
+			packet.Version = 2
+			packet.PayloadType = av.PayloadType
+			packet.SSRC = av.SSRC
+		}
+		packet.Payload = packet.Payload[:0]
+		packet.SequenceNumber = av.rtpSequence
+		if av.SampleRate != 90000 {
+			packet.Timestamp = uint32(uint64(av.SampleRate) * uint64(av.Value.PTS) / 90000)
+		} else {
+			packet.Timestamp = av.Value.PTS
+		}
+		packet.Marker = i == packetCount-1
+		for _, p := range pp {
+			packet.Payload = append(packet.Payload, p...)
+		}
+		av.Value.RTP.Push(rtpItem)
+	}
+}
+
 type RTPDemuxer struct {
-	lastSeq   uint16 //上一个收到的序号，用于乱序重排
-	lastSeq2  uint16 //记录上上一个收到的序列号
-	乱序重排      util.RTPReorder[*RTPFrame]
-	RTPWriter `json:"-"`
+	lastSeq  uint16 //上一个收到的序号，用于乱序重排
+	lastSeq2 uint16 //记录上上一个收到的序列号
+	乱序重排     util.RTPReorder[*RTPFrame]
 }
 
 // 获取缓存中下一个rtpFrame

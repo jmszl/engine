@@ -11,6 +11,7 @@ import (
 	. "github.com/logrusorgru/aurora"
 	"go.uber.org/zap"
 	. "m7s.live/engine/v4/common"
+	"m7s.live/engine/v4/config"
 	"m7s.live/engine/v4/log"
 	"m7s.live/engine/v4/track"
 	"m7s.live/engine/v4/util"
@@ -37,6 +38,11 @@ type SEwaitPublish struct {
 type SEpublish struct {
 	StateEvent
 }
+
+type SErepublish struct {
+	StateEvent
+}
+
 type SEwaitClose struct {
 	StateEvent
 }
@@ -151,6 +157,32 @@ type StreamTimeoutConfig struct {
 }
 type Tracks struct {
 	util.Map[string, Track]
+	MainVideo *track.Video
+}
+
+func (tracks *Tracks) Add(name string, t Track) bool {
+	switch v := t.(type) {
+	case *track.Video:
+		if tracks.MainVideo == nil {
+			tracks.MainVideo = v
+			tracks.SetIDR(v)
+		}
+	case *track.Audio:
+		if tracks.MainVideo != nil {
+			v.Narrow()
+		}
+	}
+	return tracks.Map.Add(name, t)
+}
+
+func (tracks *Tracks) SetIDR(video Track) {
+	if video == tracks.MainVideo {
+		tracks.Map.Range(func(_ string, t Track) {
+			if v, ok := t.(*track.Audio); ok {
+				v.Narrow()
+			}
+		})
+	}
 }
 
 func (tracks *Tracks) MarshalJSON() ([]byte, error) {
@@ -170,8 +202,8 @@ type Stream struct {
 	Path        string
 	Publisher   IPublisher
 	State       StreamState
-	StateEvent  StateEvent  // 进入当前状态的事件
-	Subscribers Subscribers // 订阅者
+	SEHistory   []StateEvent // 事件历史
+	Subscribers Subscribers  // 订阅者
 	Tracks      Tracks
 	AppName     string
 	StreamName  string
@@ -184,6 +216,10 @@ type StreamSummay struct {
 	StartTime   time.Time
 	Type        string
 	BPS         int
+}
+
+func (s *Stream) GetPublisherConfig() *config.Publish {
+	return s.Publisher.GetPublisher().Config
 }
 
 // Summary 返回流的简要信息
@@ -206,7 +242,9 @@ func (s *Stream) Summary() (r StreamSummay) {
 func (s *Stream) SSRC() uint32 {
 	return uint32(uintptr(unsafe.Pointer(s)))
 }
-
+func (s *Stream) SetIDR(video Track) {
+	s.Tracks.SetIDR(video)
+}
 func findOrCreateStream(streamPath string, waitTimeout time.Duration) (s *Stream, created bool) {
 	p := strings.Split(streamPath, "/")
 	if len(p) < 2 {
@@ -241,30 +279,36 @@ func (r *Stream) action(action StreamAction) (ok bool) {
 	var next StreamState
 	if next, ok = event.Next(); ok {
 		r.State = next
-		r.StateEvent = event
+		r.SEHistory = append(r.SEHistory, event)
 		// 给Publisher状态变更的回调，方便进行远程拉流等操作
 		var stateEvent any
 		r.Info(Sprintf("%s%s%s", StateNames[event.From], Yellow("->"), StateNames[next]), zap.String("action", ActionNames[action]))
 		switch next {
 		case STATE_WAITPUBLISH:
 			stateEvent = SEwaitPublish{event, r.Publisher}
-			waitTime := 0
+			waitTime := time.Duration(0)
 			if r.Publisher != nil {
 				waitTime = r.Publisher.GetPublisher().Config.WaitCloseTimeout
+				r.Tracks.Range(func(name string, t Track) {
+					t.SetStuff(TrackStateOffline)
+				})
 			}
 			r.Subscribers.OnPublisherLost(event)
-			suber := r.Subscribers.Pick()
-			if suber != nil {
+			if suber := r.Subscribers.Pick(); suber != nil {
 				r.Subscribers.Broadcast(stateEvent)
 				if waitTime == 0 {
 					waitTime = suber.GetSubscriber().Config.WaitTimeout
 				}
 			} else if waitTime == 0 {
-				waitTime = 1 //没有订阅者也没有配置发布者等待重连时间，默认1秒后关闭流
+				waitTime = time.Millisecond * 10 //没有订阅者也没有配置发布者等待重连时间，默认10ms后关闭流
 			}
-			r.timeout.Reset(util.Second2Duration(waitTime))
+			r.timeout.Reset(waitTime)
 		case STATE_PUBLISHING:
-			stateEvent = SEpublish{event}
+			if len(r.SEHistory) > 1 {
+				stateEvent = SErepublish{event}
+			} else {
+				stateEvent = SEpublish{event}
+			}
 			r.Subscribers.Broadcast(stateEvent)
 			r.timeout.Reset(r.PublishTimeout) // 5秒心跳，检测track的存活度
 		case STATE_WAITCLOSE:
@@ -272,7 +316,7 @@ func (r *Stream) action(action StreamAction) (ok bool) {
 			r.timeout.Reset(r.DelayCloseTimeout)
 		case STATE_CLOSED:
 			for !r.actionChan.Close() {
-				// 等待channel发送完毕
+				// 等待channel发送完毕，伪自旋锁
 				time.Sleep(time.Millisecond * 100)
 			}
 			stateEvent = SEclose{event}
@@ -291,7 +335,20 @@ func (r *Stream) action(action StreamAction) (ok bool) {
 }
 
 func (r *Stream) IsShutdown() bool {
-	return r.StateEvent.Action == ACTION_CLOSE || (r.StateEvent.Action == ACTION_TIMEOUT && r.StateEvent.From == STATE_WAITCLOSE)
+	switch l := len(r.SEHistory); l {
+	case 0:
+		return false
+	case 1:
+		return r.SEHistory[0].Action == ACTION_CLOSE
+	default:
+		switch r.SEHistory[l-1].Action {
+		case ACTION_CLOSE:
+			return true
+		case ACTION_TIMEOUT:
+			return r.SEHistory[l-1].From == STATE_WAITCLOSE
+		}
+	}
+	return false
 }
 
 func (r *Stream) IsClosed() bool {
@@ -375,7 +432,7 @@ func (s *Stream) run() {
 					if s.action(ACTION_PUBLISH) || republish {
 						v.Resolve()
 					} else {
-						v.Reject(ErrBadName)
+						v.Reject(ErrBadStreamName)
 					}
 				case *util.Promise[ISubscriber]:
 					if s.IsClosed() {
@@ -387,21 +444,21 @@ func (s *Stream) run() {
 					waits := &waitTracks{
 						Promise: v,
 					}
-					if ats := io.Args.Get("ats"); ats != "" {
+					if ats := io.Args.Get(sbConfig.SubAudioArgName); ats != "" {
 						waits.audio.Wait(strings.Split(ats, ",")...)
 					} else if len(sbConfig.SubAudioTracks) > 0 {
 						waits.audio.Wait(sbConfig.SubAudioTracks...)
 					} else if sbConfig.SubAudio {
 						waits.audio.Wait()
 					}
-					if vts := io.Args.Get("vts"); vts != "" {
+					if vts := io.Args.Get(sbConfig.SubVideoArgName); vts != "" {
 						waits.video.Wait(strings.Split(vts, ",")...)
 					} else if len(sbConfig.SubVideoTracks) > 0 {
 						waits.video.Wait(sbConfig.SubVideoTracks...)
 					} else if sbConfig.SubVideo {
 						waits.video.Wait()
 					}
-					if dts := io.Args.Get("dts"); dts != "" {
+					if dts := io.Args.Get(sbConfig.SubDataArgName); dts != "" {
 						waits.data.Wait(strings.Split(dts, ",")...)
 					} else {
 						// waits.data.Wait()
@@ -437,14 +494,16 @@ func (s *Stream) run() {
 							dt.Dispose()
 						}
 					}
-				case Track:
+				case *util.Promise[Track]:
 					if s.State == STATE_WAITPUBLISH {
 						s.action(ACTION_PUBLISH)
 					}
-					name := v.GetBase().Name
-					if s.Tracks.Add(name, v) {
-						s.Info("track +1", zap.String("name", name))
-						s.Subscribers.OnTrack(v)
+					name := v.Value.GetBase().Name
+					if s.Tracks.Add(name, v.Value) {
+						v.Resolve()
+						s.Subscribers.OnTrack(v.Value)
+					} else {
+						v.Reject(ErrBadTrackName)
 					}
 				case StreamAction:
 					s.action(v)
@@ -464,7 +523,7 @@ func (s *Stream) run() {
 	}
 }
 
-func (s *Stream) AddTrack(t Track) {
+func (s *Stream) AddTrack(t *util.Promise[Track]) {
 	s.Receive(t)
 }
 
@@ -476,11 +535,11 @@ func (s *Stream) RemoveTrack(t Track) {
 	s.Receive(TrackRemoved{t})
 }
 
-func (r *Stream) NewDataTrack(locker sync.Locker) (dt *track.Data) {
+func (r *Stream) NewDataTrack(name string, locker sync.Locker) (dt *track.Data) {
 	dt = &track.Data{
 		Locker: locker,
 	}
 	dt.Init(10)
-	dt.Stream = r
+	dt.SetStuff(name, r)
 	return
 }

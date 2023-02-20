@@ -1,7 +1,6 @@
 package track
 
 import (
-	"context"
 	"time"
 	"unsafe"
 
@@ -32,158 +31,234 @@ func (p *流速控制) 控制流速(绝对时间戳 uint32) {
 	// 	return
 	// }
 	// 如果收到的帧的时间戳超过实际消耗的时间100ms就休息一下，100ms作为一个弹性区间防止频繁调用sleep
-	if 过快毫秒 := (数据时间差 - 实际时间差) / time.Millisecond; 过快毫秒 > 100 {
-		// println("过快毫秒", 过快毫秒)
-		if 过快毫秒 > p.等待上限 {
-			time.Sleep(time.Millisecond * p.等待上限)
+	if 过快 := (数据时间差 - 实际时间差); 过快 > 100*time.Millisecond {
+		// fmt.Println("过快毫秒", 过快.Milliseconds())
+		// println("过快毫秒", p.name, 过快.Milliseconds())
+		if 过快 > p.等待上限 {
+			time.Sleep(p.等待上限)
 		} else {
-			time.Sleep(过快毫秒 * time.Millisecond)
+			time.Sleep(过快)
 		}
-	} else if 过快毫秒 < -100 {
-		// println("过慢毫秒", 过快毫秒)
+	} else if 过快 < -100*time.Millisecond {
+		// println("过慢毫秒", p.name, 过快.Milliseconds())
 	}
+}
+
+type SpesificTrack interface {
+	CompleteRTP(*AVFrame)
+	CompleteAVCC(*AVFrame)
+	WriteSliceBytes([]byte)
+	WriteRTPFrame(*RTPFrame)
+	generateTimestamp(uint32)
+	WriteSequenceHead([]byte)
+	Flush()
+}
+
+type IDRingList struct {
+	util.List[*util.Ring[AVFrame]]
+	IDRing      *util.Ring[AVFrame]
+	HistoryRing *util.Ring[AVFrame]
+}
+
+func (p *IDRingList) AddIDR(IDRing *util.Ring[AVFrame]) {
+	p.PushValue(IDRing)
+	p.IDRing = IDRing
+}
+
+func (p *IDRingList) ShiftIDR() {
+	p.Shift()
+	p.HistoryRing = p.Next.Value
 }
 
 // Media 基础媒体Track类
-type Media[T RawSlice] struct {
+type Media struct {
 	Base
-	AVRing[T]
-	SampleRate           uint32
-	SSRC                 uint32
-	DecoderConfiguration DecoderConfiguration[T] `json:"-"` //H264(SPS、PPS) H265(VPS、SPS、PPS) AAC(config)
+	RingBuffer[AVFrame]
+	PayloadType     byte
+	IDRingList      `json:"-"` //最近的关键帧位置，首屏渲染
+	SSRC            uint32
+	SampleRate      uint32
+	BytesPool       util.BytesPool `json:"-"`
+	rtpPool         util.Pool[RTPFrame]
+	SequenceHead    []byte `json:"-"` //H264(SPS、PPS) H265(VPS、SPS、PPS) AAC(config)
+	SequenceHeadSeq int
 	RTPMuxer
 	RTPDemuxer
+	SpesificTrack `json:"-"`
+	deltaTs       int64 //用于接续发布后时间戳连续
 	流速控制
 }
 
-func (av *Media[T]) SetSpeedLimit(value int) {
-	av.等待上限 = time.Duration(value)
+// 毫秒转换为Mpeg时间戳
+func (av *Media) Ms2MpegTs(ms uint32) uint32 {
+	return uint32(uint64(ms) * 90)
 }
 
-func (av *Media[T]) SetStuff(stuff ...any) {
+// Mpeg时间戳转换为毫秒
+func (av *Media) MpegTs2Ms(mpegTs uint32) uint32 {
+	return uint32(uint64(mpegTs) / 90)
+}
+
+func (av *Media) MpegTs2RTPTs(mpegTs uint32) uint32 {
+	return uint32(uint64(mpegTs) * uint64(av.SampleRate) / 90000)
+}
+
+// 为json序列化而计算的数据
+func (av *Media) SnapForJson() {
+	v := av.LastValue
+	if av.RawPart != nil {
+		av.RawPart = av.RawPart[:0]
+	}
+	if av.RawSize = v.AUList.ByteLength; av.RawSize > 0 {
+		r := v.AUList.NewReader()
+		for b, err := r.ReadByte(); err == nil && len(av.RawPart) < 10; b, err = r.ReadByte() {
+			av.RawPart = append(av.RawPart, int(b))
+		}
+	}
+}
+
+func (av *Media) SetSpeedLimit(value time.Duration) {
+	av.等待上限 = value
+}
+
+func (av *Media) SetStuff(stuff ...any) {
+	// 代表发布者已经离线，该Track成为遗留Track，等待下一任发布者接续发布
 	for _, s := range stuff {
 		switch v := s.(type) {
-		case time.Duration:
-			av.Poll = v
-		case string:
-			av.Name = v
 		case int:
-			av.AVRing.Init(v)
+			av.Init(v)
 			av.SSRC = uint32(uintptr(unsafe.Pointer(av)))
-			av.等待上限 = time.Duration(config.Global.SpeedLimit)
+			av.等待上限 = config.Global.SpeedLimit
 		case uint32:
 			av.SampleRate = v
 		case byte:
-			av.DecoderConfiguration.PayloadType = v
-		case IStream:
-			av.Stream = v
-		case RTPWriter:
-			av.RTPWriter = v
+			av.PayloadType = v
+		case util.BytesPool:
+			av.BytesPool = v
+		case SpesificTrack:
+			av.SpesificTrack = v
+		default:
+			av.Base.SetStuff(v)
 		}
 	}
 }
 
-func (av *Media[T]) LastWriteTime() time.Time {
-	return av.AVRing.RingBuffer.LastValue.Timestamp
+func (av *Media) LastWriteTime() time.Time {
+	return av.LastValue.Timestamp
 }
 
-func (av *Media[T]) Play(ctx context.Context, onMedia func(*AVFrame[T]) error) error {
-	for ar := av.ReadRing(); ctx.Err() == nil; ar.MoveNext() {
-		ap := ar.Read(ctx)
-		if err := onMedia(ap); err != nil {
-			// TODO: log err
-			return err
-		}
+// func (av *Media) Play(ctx context.Context, onMedia func(*AVFrame) error) error {
+// 	for ar := av.ReadRing(); ctx.Err() == nil; ar.MoveNext() {
+// 		ap := ar.Read(ctx)
+// 		if err := onMedia(ap); err != nil {
+// 			// TODO: log err
+// 			return err
+// 		}
+// 	}
+// 	return ctx.Err()
+// }
+
+func (av *Media) CurrentFrame() *AVFrame {
+	return &av.Value
+}
+func (av *Media) PreFrame() *AVFrame {
+	return av.LastValue
+}
+
+func (av *Media) generateTimestamp(ts uint32) {
+	av.Value.PTS = ts
+	av.Value.DTS = ts
+}
+
+func (av *Media) WriteSequenceHead(sh []byte) {
+	av.SequenceHead = sh
+	av.SequenceHeadSeq++
+}
+func (av *Media) AppendAuBytes(b ...[]byte) {
+	var au util.BLL
+	for _, bb := range b {
+		au.Push(av.BytesPool.GetShell(bb))
 	}
-	return ctx.Err()
+	av.Value.AUList.PushValue(&au)
 }
 
-func (av *Media[T]) ReadRing() *AVRing[T] {
-	return util.Clone(av.AVRing)
+func (av *Media) narrow(gop int) {
+	if l := av.Size - gop - 5; l > 5 {
+		// av.Stream.Debug("resize", zap.Int("before", av.Size), zap.Int("after", av.Size-l), zap.String("name", av.Name))
+		//缩小缓冲环节省内存
+		av.Reduce(l).Do(func(v AVFrame) {
+			v.Reset()
+		})
+	}
 }
 
-func (av *Media[T]) GetDecoderConfiguration() DecoderConfiguration[T] {
-	return av.DecoderConfiguration
-}
-
-func (av *Media[T]) CurrentFrame() *AVFrame[T] {
-	return &av.AVRing.RingBuffer.Value
-}
-func (av *Media[T]) PreFrame() *AVFrame[T] {
-	return av.AVRing.RingBuffer.LastValue
-}
-
-func (av *Media[T]) generateTimestamp() {
-	ts := av.AVRing.RingBuffer.Value.RTP[0].Timestamp
-	av.AVRing.RingBuffer.Value.PTS = ts
-	av.AVRing.RingBuffer.Value.DTS = ts
-}
-
-func (av *Media[T]) WriteSlice(slice T) {
-	av.Value.AppendRaw(slice)
-}
-
-func (av *Media[T]) WriteAVCC(ts uint32, frame AVCCFrame) {
-	curValue := &av.Value
-	cts := frame.CTS()
-	curValue.BytesIn += len(frame)
-	curValue.AppendAVCC(frame)
-	curValue.DTS = ts * 90
-	curValue.PTS = (ts + cts) * 90
-	// av.Stream.Tracef("WriteAVCC:ts %d,cts %d,len %d", ts, cts, len(frame))
-}
-
-func (av *Media[T]) Flush() {
-	curValue, preValue := &av.Value, av.LastValue
-	if av.起始时间.IsZero() {
-		av.重置(curValue.AbsTime)
+func (av *Media) AddIDR() {
+	if av.Stream.GetPublisherConfig().BufferTime > 0 {
+		av.IDRingList.AddIDR(av.Ring)
+		if av.HistoryRing == nil {
+			av.HistoryRing = av.IDRing
+		}
 	} else {
+		av.IDRing = av.Ring
+	}
+}
+
+func (av *Media) Flush() {
+	curValue, preValue, nextValue := &av.Value, av.LastValue, av.Next()
+	if av.State == TrackStateOffline {
+		av.State = TrackStateOnline
+		av.deltaTs = int64(preValue.AbsTime) - int64(curValue.AbsTime) + int64(preValue.DeltaTime)
+		av.Info("track back online")
+	}
+	if av.deltaTs != 0 {
+		rtpts := int64(av.deltaTs) * 90
+		curValue.DTS = uint32(int64(curValue.DTS) + rtpts)
+		curValue.PTS = uint32(int64(curValue.PTS) + rtpts)
+		curValue.AbsTime = 0
+	}
+	bufferTime := av.Stream.GetPublisherConfig().BufferTime
+	if bufferTime > 0 && av.IDRingList.Length > 1 && time.Duration(curValue.AbsTime-av.IDRingList.Next.Next.Value.Value.AbsTime)*time.Millisecond > bufferTime {
+		av.ShiftIDR()
+		av.narrow(int(curValue.Sequence - av.HistoryRing.Value.Sequence))
+	}
+	// 下一帧为订阅起始帧，即将覆盖，需要扩环
+	if nextValue == av.IDRing || nextValue == av.HistoryRing {
+		// if av.AVRing.Size < 512 {
+		// av.Stream.Debug("resize", zap.Int("before", av.Size), zap.Int("after", av.Size+5), zap.String("name", av.Name))
+		av.Glow(5)
+		// } else {
+		// 	av.Stream.Error("sub ring overflow", zap.Int("size", av.AVRing.Size), zap.String("name", av.Name))
+		// }
+	}
+
+	if av.起始时间.IsZero() {
+		curValue.DeltaTime = 0
+		av.重置(curValue.AbsTime)
+	} else if curValue.AbsTime == 0 {
 		curValue.DeltaTime = (curValue.DTS - preValue.DTS) / 90
-		// println(curValue.DeltaTime ,curValue.DTS , preValue.DTS)
 		curValue.AbsTime = preValue.AbsTime + curValue.DeltaTime
+	} else {
+		curValue.DeltaTime = curValue.AbsTime - preValue.AbsTime
+	}
+	// fmt.Println(av.Name,curValue.DTS, curValue.AbsTime, curValue.DeltaTime)
+	if curValue.AUList.Length > 0 {
+		// 补完RTP
+		if config.Global.EnableRTP && curValue.RTP.Length == 0 {
+			av.CompleteRTP(curValue)
+		}
+		// 补完AVCC
+		if config.Global.EnableAVCC && curValue.AVCC.ByteLength == 0 {
+			av.CompleteAVCC(curValue)
+		}
 	}
 	av.Base.Flush(&curValue.BaseFrame)
 	if av.等待上限 > 0 {
 		av.控制流速(curValue.AbsTime)
 	}
-	av.Step()
-}
-
-func (av *Media[T]) ComplementAVCC() bool {
-	return config.Global.EnableAVCC && len(av.Value.AVCC) == 0
-}
-
-// 是否需要补完RTP格式
-func (av *Media[T]) ComplementRTP() bool {
-	return config.Global.EnableRTP && len(av.Value.RTP) == 0
-}
-
-// https://www.cnblogs.com/moonwalk/p/15903760.html
-// Packetize packetizes the payload of an RTP packet and returns one or more RTP packets
-func (av *Media[T]) PacketizeRTP(payloads ...[][]byte) {
-	packetCount := len(payloads)
-	if cap(av.Value.RTP) < packetCount {
-		av.Value.RTP = make([]*RTPFrame, packetCount)
-	} else {
-		av.Value.RTP = av.Value.RTP[:packetCount]
-	}
-	for i, pp := range payloads {
-		av.rtpSequence++
-		packet := av.Value.RTP[i]
-		if packet == nil {
-			packet = &RTPFrame{}
-			av.Value.RTP[i] = packet
-			packet.Version = 2
-			packet.PayloadType = av.DecoderConfiguration.PayloadType
-			packet.Payload = make([]byte, 0, 1200)
-			packet.SSRC = av.SSRC
-		}
-		packet.Payload = packet.Payload[:0]
-		packet.SequenceNumber = av.rtpSequence
-		packet.Timestamp = av.Value.PTS
-		packet.Marker = i == packetCount-1
-		for _, p := range pp {
-			packet.Payload = append(packet.Payload, p...)
-		}
-	}
+	preValue = curValue
+	curValue = av.MoveNext()
+	curValue.CanRead = false
+	curValue.Reset()
+	curValue.Sequence = av.MoveCount
+	preValue.CanRead = true
 }

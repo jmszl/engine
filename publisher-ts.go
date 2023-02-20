@@ -68,33 +68,10 @@ func (t *TSPublisher) ReadPES() {
 			if t.AudioTrack != nil {
 				switch t.AudioTrack.(type) {
 				case *track.AAC:
-					if t.adts == nil {
-						t.adts = append(t.adts, pes.Payload[:7]...)
-						t.AudioTrack.WriteADTS(t.adts)
-					}
-					current := t.AudioTrack.CurrentFrame()
-					current.PTS = uint32(pes.Header.Pts)
-					current.DTS = uint32(pes.Header.Dts)
-					remainLen := len(pes.Payload)
-					current.BytesIn += remainLen
-					for remainLen > 0 {
-						// AACFrameLength(13)
-						// xx xxxxxxxx xxx
-						frameLen := (int(pes.Payload[3]&3) << 11) | (int(pes.Payload[4]) << 3) | (int(pes.Payload[5]) >> 5)
-						if frameLen > remainLen {
-							break
-						}
-
-						t.AudioTrack.WriteSlice(pes.Payload[7:frameLen])
-						pes.Payload = pes.Payload[frameLen:remainLen]
-						remainLen -= frameLen
-					}
-					t.AudioTrack.Flush()
+					t.AudioTrack.WriteADTS(uint32(pes.Header.Pts), pes.Payload)
 				case *track.G711:
 					t.AudioTrack.WriteRaw(uint32(pes.Header.Pts), pes.Payload)
-					t.AudioTrack.Flush()
 				}
-
 			}
 		case mpegts.STREAM_ID_VIDEO:
 			if t.VideoTrack == nil {
@@ -103,7 +80,7 @@ func (t *TSPublisher) ReadPES() {
 				}
 			}
 			if t.VideoTrack != nil {
-				t.VideoTrack.WriteAnnexB(uint32(pes.Header.Pts), uint32(pes.Header.Dts), pes.Payload)
+				t.WriteAnnexB(uint32(pes.Header.Pts), uint32(pes.Header.Dts), pes.Payload)
 			}
 		}
 	}

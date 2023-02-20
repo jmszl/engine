@@ -2,10 +2,22 @@ package util
 
 import (
 	"encoding/binary"
+	"io"
 	"math"
+	"net"
 )
 
 type Buffer []byte
+
+func (b *Buffer) Read(buf []byte) (n int, err error) {
+	if !b.CanReadN(len(buf)) {
+		copy(buf, *b)
+		return b.Len(), io.EOF
+	}
+	ret := b.ReadN(len(buf))
+	copy(buf, ret)
+	return len(ret), err
+}
 
 func (b *Buffer) ReadN(n int) Buffer {
 	l := b.Len()
@@ -83,13 +95,33 @@ func (b *Buffer) Malloc(count int) Buffer {
 	}
 	return b.SubBuf(l, count)
 }
+
 func (b *Buffer) Reset() {
 	*b = b.SubBuf(0, 0)
 }
+
 func (b *Buffer) Glow(n int) {
 	l := b.Len()
 	b.Malloc(n)
 	*b = b.SubBuf(0, l)
+}
+
+func (b *Buffer) Split(n int) (result net.Buffers) {
+	origin := *b
+	for {
+		if b.CanReadN(n) {
+			result = append(result, b.ReadN(n))
+		} else {
+			result = append(result, *b)
+			*b = origin
+			return
+		}
+	}
+}
+
+func (b *Buffer) MarshalAMFs(v ...any) {
+	amf := AMF{*b}
+	*b = amf.Marshals(v...)
 }
 
 // MallocSlice 用来对容量够的slice进行长度扩展+1，并返回新的位置的指针，用于写入

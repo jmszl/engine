@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mcuadros/go-defaults"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 	"m7s.live/engine/v4/config"
@@ -23,6 +24,7 @@ import (
 
 // InstallPlugin 安装插件，传入插件配置生成插件信息对象
 func InstallPlugin(config config.Plugin) *Plugin {
+	defaults.SetDefaults(config)
 	t := reflect.TypeOf(config).Elem()
 	name := strings.TrimSuffix(t.Name(), "Config")
 	plugin := &Plugin{
@@ -220,7 +222,7 @@ var ErrStreamNotExist = errors.New("stream not exist")
 
 // SubscribeExist 订阅已经存在的流
 func (opt *Plugin) SubscribeExist(streamPath string, sub ISubscriber) error {
-	opt.Info("subscribe exit", zap.String("path", streamPath))
+	opt.Info("subscribe exsit", zap.String("path", streamPath))
 	path, _, _ := strings.Cut(streamPath, "?")
 	if !Streams.Has(path) {
 		opt.Warn("stream not exist", zap.String("path", streamPath))
@@ -286,8 +288,8 @@ func (opt *Plugin) Pull(streamPath string, url string, puller IPuller, save int)
 				time.Sleep(time.Second * 5)
 			} else {
 				if err = opt.Publish(streamPath, puller); err != nil {
-					if puber := Streams.Get(streamPath).Publisher; puber != puller && puber != nil {
-						io := puber.GetPublisher()
+					if stream := Streams.Get(streamPath); stream != nil && stream.Publisher != puller && stream.Publisher != nil {
+						io := stream.Publisher.GetPublisher()
 						opt.Error("puller is not publisher", zap.String("ID", io.ID), zap.String("Type", io.Type), zap.Error(err))
 						return
 					}
@@ -350,6 +352,10 @@ func (opt *Plugin) Push(streamPath string, url string, pusher IPusher, save bool
 				time.Sleep(time.Second * 5)
 			} else {
 				if err = pusher.Connect(); err != nil {
+					if err == io.EOF {
+						opt.Info("push complete", zp, zu)
+						return
+					}
 					opt.Error("push connect", zp, zu, zap.Error(err))
 					time.Sleep(time.Second * 5)
 				} else {
