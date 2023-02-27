@@ -33,12 +33,14 @@ type VideoDeConf []byte
 type AudioDeConf []byte
 type AudioFrame struct {
 	*AVFrame
+	*track.Audio
 	AbsTime uint32
 	PTS     uint32
 	DTS     uint32
 }
 type VideoFrame struct {
 	*AVFrame
+	*track.Video
 	AbsTime uint32
 	PTS     uint32
 	DTS     uint32
@@ -57,13 +59,21 @@ func (a AudioDeConf) WithOutRTMP() []byte {
 func (v VideoDeConf) WithOutRTMP() []byte {
 	return v[5:]
 }
-
+func (f FLVFrame) IsAudio() bool {
+	return f[0][0] == codec.FLV_TAG_TYPE_AUDIO
+}
+func (f FLVFrame) IsVideo() bool {
+	return f[0][0] == codec.FLV_TAG_TYPE_VIDEO
+}
 func (f FLVFrame) WriteTo(w io.Writer) (int64, error) {
 	t := (net.Buffers)(f)
 	return t.WriteTo(w)
 }
 
 func (v VideoFrame) GetAnnexB() (r net.Buffers) {
+	if v.IFrame {
+		r = v.ParamaterSets.GetAnnexB()
+	}
 	v.AUList.Range(func(au *util.BLL) bool {
 		r = append(append(r, codec.NALU_Delimiter2), au.ToBuffers()...)
 		return true
@@ -191,11 +201,11 @@ func (s *Subscriber) PlayBlock(subType byte) {
 	case SUBTYPE_RAW:
 		sendVideoFrame = func(frame *AVFrame) {
 			// println("v", frame.Sequence, frame.AbsTime, s.VideoReader.AbsTime, frame.IFrame)
-			spesic.OnEvent(VideoFrame{frame, s.VideoReader.AbsTime, frame.PTS - s.VideoReader.SkipRTPTs, frame.DTS - s.VideoReader.SkipRTPTs})
+			spesic.OnEvent(VideoFrame{frame, s.Video, s.VideoReader.AbsTime, frame.PTS - s.VideoReader.SkipRTPTs, frame.DTS - s.VideoReader.SkipRTPTs})
 		}
 		sendAudioFrame = func(frame *AVFrame) {
 			// println("a", frame.Sequence, frame.AbsTime, s.AudioReader.AbsTime)
-			spesic.OnEvent(AudioFrame{frame, s.AudioReader.AbsTime, frame.PTS - s.AudioReader.SkipRTPTs, frame.PTS - s.AudioReader.SkipRTPTs})
+			spesic.OnEvent(AudioFrame{frame, s.Audio, s.AudioReader.AbsTime, frame.PTS - s.AudioReader.SkipRTPTs, frame.PTS - s.AudioReader.SkipRTPTs})
 		}
 	case SUBTYPE_RTP:
 		var videoSeq, audioSeq uint16
@@ -231,11 +241,9 @@ func (s *Subscriber) PlayBlock(subType byte) {
 		}
 		sendVideoDecConf = func() {
 			sendFlvFrame(codec.FLV_TAG_TYPE_VIDEO, s.VideoReader.AbsTime, s.VideoReader.Track.SequenceHead)
-			// spesic.OnEvent(FLVFrame(copyBuffers(s.Video.Track.DecoderConfiguration.FLV)))
 		}
 		sendAudioDecConf = func() {
 			sendFlvFrame(codec.FLV_TAG_TYPE_AUDIO, s.AudioReader.AbsTime, s.AudioReader.Track.SequenceHead)
-			// spesic.OnEvent(FLVFrame(copyBuffers(s.Audio.Track.DecoderConfiguration.FLV)))
 		}
 		sendVideoFrame = func(frame *AVFrame) {
 			// println(frame.Sequence, s.VideoReader.AbsTime, frame.DeltaTime, frame.IFrame)

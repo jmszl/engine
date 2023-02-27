@@ -47,7 +47,7 @@ func (aac *AAC) WriteADTS(ts uint32, adts []byte) {
 		aac.Parse(aac.SequenceHead[2:])
 		aac.Attach()
 	}
-
+	aac.generateTimestamp(ts)
 	frameLen := (int(adts[3]&3) << 11) | (int(adts[4]) << 3) | (int(adts[5]) >> 5)
 	for len(adts) >= frameLen {
 		aac.Value.AUList.Push(aac.BytesPool.GetShell(adts[7:frameLen]))
@@ -62,6 +62,10 @@ func (aac *AAC) WriteADTS(ts uint32, adts []byte) {
 
 // https://datatracker.ietf.org/doc/html/rfc3640#section-3.2.1
 func (aac *AAC) WriteRTPFrame(frame *RTPFrame) {
+	if aac.SampleRate != 90000 {
+		aac.generateTimestamp(uint32(uint64(frame.Timestamp) * 90000 / uint64(aac.SampleRate)))
+	}
+	defer aac.Flush()
 	auHeaderLen := util.ReadBE[int](frame.Payload[:aac.Mode]) >> 3 //通常为2，即一个AU Header的长度
 	// auHeaderCount := auHeaderLen >> 1 // AU Header的个数, 通常为1
 	if auHeaderLen == 0 {

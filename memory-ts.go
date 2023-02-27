@@ -8,7 +8,6 @@ import (
 
 	"m7s.live/engine/v4/codec"
 	"m7s.live/engine/v4/codec/mpegts"
-	"m7s.live/engine/v4/common"
 	"m7s.live/engine/v4/util"
 )
 
@@ -141,11 +140,11 @@ func (ts *MemoryTs) WritePESPacket(frame *mpegts.MpegtsPESFrame, packet mpegts.M
 	return nil
 }
 
-func (ts *MemoryTs) WriteAudioFrame(frame *AudioFrame, aac_asc *codec.AudioSpecificConfig, pes *mpegts.MpegtsPESFrame) (err error) {
+func (ts *MemoryTs) WriteAudioFrame(frame AudioFrame, pes *mpegts.MpegtsPESFrame) (err error) {
 	adtsItem := ts.Get(7)
 	defer adtsItem.Recycle()
 	adts := adtsItem.Value
-	aac_asc.ToADTS(frame.AUList.ByteLength, adts)
+	frame.AudioSpecificConfig.ToADTS(frame.AUList.ByteLength, adts)
 	// packetLength = 原始音频流长度 + adts(7) + MpegTsOptionalPESHeader长度(8 bytes, 因为只含有pts)
 	pktLength := len(adts) + frame.AUList.ByteLength + 8
 	var packet mpegts.MpegTsPESPacket
@@ -154,22 +153,20 @@ func (ts *MemoryTs) WriteAudioFrame(frame *AudioFrame, aac_asc *codec.AudioSpeci
 	packet.Header.StreamID = mpegts.STREAM_ID_AUDIO
 	packet.Header.PesPacketLength = uint16(pktLength)
 	packet.Header.Pts = uint64(frame.PTS)
+	pes.ProgramClockReferenceBase = packet.Header.Pts
 	packet.Header.PtsDtsFlags = 0x80
 	packet.Header.PesHeaderDataLength = 5
 	packet.Buffers = append(append(packet.Buffers, adts), frame.AUList.ToBuffers()...)
 	return ts.WritePESPacket(pes, packet)
 }
 
-func (ts *MemoryTs) WriteVideoFrame(frame *VideoFrame, paramaterSets common.ParamaterSets, pes *mpegts.MpegtsPESFrame) (err error) {
+func (ts *MemoryTs) WriteVideoFrame(frame VideoFrame, pes *mpegts.MpegtsPESFrame) (err error) {
 	var buffer net.Buffers
 	//需要对原始数据(ES),进行一些预处理,视频需要分割nalu(H264编码),并且打上sps,pps,nalu_aud信息.
-	if len(paramaterSets) == 2 {
+	if len(frame.ParamaterSets) == 2 {
 		buffer = append(buffer, codec.NALU_AUD_BYTE)
 	} else {
 		buffer = append(buffer, codec.AudNalu)
-	}
-	if frame.IFrame {
-		buffer = append(buffer, paramaterSets.GetAnnexB()...)
 	}
 	buffer = append(buffer, frame.GetAnnexB()...)
 	pktLength := util.SizeOfBuffers(buffer) + 10 + 3
@@ -183,6 +180,7 @@ func (ts *MemoryTs) WriteVideoFrame(frame *VideoFrame, paramaterSets common.Para
 	packet.Header.StreamID = mpegts.STREAM_ID_VIDEO
 	packet.Header.PesPacketLength = uint16(pktLength)
 	packet.Header.Pts = uint64(frame.PTS)
+	pes.ProgramClockReferenceBase = packet.Header.Pts
 	packet.Header.Dts = uint64(frame.DTS)
 	packet.Header.PtsDtsFlags = 0xC0
 	packet.Header.PesHeaderDataLength = 10
