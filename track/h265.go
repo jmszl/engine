@@ -29,7 +29,9 @@ func NewH265(stream IStream, stuff ...any) (vt *H265) {
 }
 
 func (vt *H265) WriteSliceBytes(slice []byte) {
-	switch t := codec.ParseH265NALUType(slice[0]); t {
+	t := codec.ParseH265NALUType(slice[0])
+	// fmt.Println("H265 NALU Type:", t)
+	switch t {
 	case codec.NAL_UNIT_VPS:
 		vt.VPS = slice
 		vt.ParamaterSets[0] = slice
@@ -43,6 +45,9 @@ func (vt *H265) WriteSliceBytes(slice []byte) {
 		extraData, err := codec.BuildH265SeqHeaderFromVpsSpsPps(vt.VPS, vt.SPS, vt.PPS)
 		if err == nil {
 			vt.WriteSequenceHead(extraData)
+		} else {
+			vt.Error("H265 BuildH265SeqHeaderFromVpsSpsPps", zap.Error(err))
+			vt.Stream.Close()
 		}
 	case
 		codec.NAL_UNIT_CODED_SLICE_BLA,
@@ -96,7 +101,12 @@ func (vt *H265) WriteRTPFrame(frame *RTPFrame) {
 			buffer.ReadUint16()
 		}
 		for buffer.CanRead() {
-			vt.WriteSliceBytes(buffer.ReadN(int(buffer.ReadUint16())))
+			l := int(buffer.ReadUint16())
+			if buffer.CanReadN(l) {
+				vt.WriteSliceBytes(buffer.ReadN(l))
+			} else {
+				return
+			}
 			if usingDonlField {
 				buffer.ReadByte()
 			}

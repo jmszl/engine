@@ -44,6 +44,7 @@ func InstallPlugin(config config.Plugin) *Plugin {
 	if config != EngineConfig {
 		plugin.Logger = log.With(zap.String("plugin", name))
 		Plugins[name] = plugin
+		plugins = append(plugins, plugin)
 		plugin.Info("install", zap.String("version", plugin.Version))
 	}
 	return plugin
@@ -260,7 +261,8 @@ var Pullers sync.Map
 
 func (opt *Plugin) Pull(streamPath string, url string, puller IPuller, save int) (err error) {
 	zurl := zap.String("url", url)
-	opt.Info("pull", zap.String("path", streamPath), zurl)
+	zpath := zap.String("path", streamPath)
+	opt.Info("pull", zpath, zurl)
 	defer func() {
 		if err != nil {
 			opt.Error("pull failed", zurl, zap.Error(err))
@@ -273,7 +275,7 @@ func (opt *Plugin) Pull(streamPath string, url string, puller IPuller, save int)
 	pullConf := conf.GetPullConfig()
 
 	puller.init(streamPath, url, pullConf)
-
+	puller.SetLogger(opt.Logger.With(zpath, zurl))
 	go func() {
 		Pullers.Store(puller, url)
 		defer Pullers.Delete(puller)
@@ -288,12 +290,18 @@ func (opt *Plugin) Pull(streamPath string, url string, puller IPuller, save int)
 				time.Sleep(time.Second * 5)
 			} else {
 				if err = opt.Publish(streamPath, puller); err != nil {
-					if stream := Streams.Get(streamPath); stream != nil && stream.Publisher != puller && stream.Publisher != nil {
-						io := stream.Publisher.GetPublisher()
-						opt.Error("puller is not publisher", zap.String("ID", io.ID), zap.String("Type", io.Type), zap.Error(err))
+					if stream := Streams.Get(streamPath); stream != nil {
+						if stream.Publisher != puller && stream.Publisher != nil {
+							io := stream.Publisher.GetPublisher()
+							opt.Error("puller is not publisher", zap.String("ID", io.ID), zap.String("Type", io.Type), zap.Error(err))
+							return
+						} else {
+							opt.Warn("pull publish", zurl, zap.Error(err))
+						}
+					} else {
+						opt.Error("pull publish", zurl, zap.Error(err))
 						return
 					}
-					opt.Error("pull publish", zurl, zap.Error(err))
 				}
 				if err = puller.Pull(); err != nil && !puller.IsShutdown() {
 					opt.Error("pull", zurl, zap.Error(err))
