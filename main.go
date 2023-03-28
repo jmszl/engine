@@ -1,20 +1,15 @@
 package engine // import "m7s.live/engine/v4"
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 	"io/ioutil"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	. "github.com/logrusorgru/aurora"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -114,22 +109,14 @@ func Run(ctx context.Context, configFile string) (err error) {
 		}
 		plugin.assign()
 	}
-	UUID := uuid.NewString()
-	reportTimer := time.NewTicker(time.Minute)
-	contentBuf := bytes.NewBuffer(nil)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://console.monibuca.com/report", nil)
-	req.Header.Set("Content-Type", "application/json")
 	version := Engine.Version
 	if ver, ok := ctx.Value("version").(string); ok && ver != "" && ver != "dev" {
 		version = ver
 	}
 	log.Info(Blink("m7s@"+version), " start success")
-	content := fmt.Sprintf(`{"uuid":"%s","version":"%s","os":"%s","arch":"%s"}`, UUID, version, runtime.GOOS, runtime.GOARCH)
 	if EngineConfig.Secret != "" {
 		EngineConfig.OnEvent(ctx)
 	}
-	var c http.Client
-	var firstReport = false
 	for {
 		select {
 		case event := <-EventBus:
@@ -140,18 +127,6 @@ func Run(ctx context.Context, configFile string) (err error) {
 			}
 		case <-ctx.Done():
 			return
-		case <-reportTimer.C:
-			contentBuf.Reset()
-			if firstReport {
-				contentBuf.WriteString(fmt.Sprintf(`{"uuid":"`+UUID+`","streams":%d}`, len(Streams.Map)))
-			} else {
-				contentBuf.WriteString(content)
-			}
-			req.Body = ioutil.NopCloser(contentBuf)
-			_, err := c.Do(req)
-			if err == nil && !firstReport {
-				firstReport = true
-			}
 		}
 	}
 }

@@ -1,7 +1,6 @@
 package config
 
 import (
-	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -9,7 +8,6 @@ import (
 	"github.com/mcuadros/go-defaults"
 	"golang.org/x/net/websocket"
 	"m7s.live/engine/v4/log"
-	"m7s.live/engine/v4/util"
 )
 
 type PublishConfig interface {
@@ -232,13 +230,13 @@ func (cfg *Engine) WsRemote() {
 }
 
 func (cfg *Engine) OnEvent(event any) {
-	switch v := event.(type) {
-	case context.Context:
-		util.RTPReorderBufferLen = uint16(cfg.RTPReorderBufferLen)
-		if strings.HasPrefix(cfg.Console.Server, "wss") {
-			go cfg.WsRemote()
-		} else {
-			go cfg.Remote(v)
-		}
-	}
+	//switch v := event.(type) {
+	//case context.Context:
+	//util.RTPReorderBufferLen = uint16(cfg.RTPReorderBufferLen)
+	//if strings.HasPrefix(cfg.Console.Server, "wss") {
+	//	go cfg.WsRemote()
+	//} else {
+	//	go cfg.Remote(v)
+	//}
+	//}
 }
