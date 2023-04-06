@@ -7,6 +7,7 @@ import (
 
 	"go.uber.org/zap"
 	"m7s.live/engine/v4/common"
+	"m7s.live/engine/v4/log"
 	"m7s.live/engine/v4/util"
 )
 
@@ -31,7 +32,7 @@ type AVRingReader struct {
 	Frame      *common.AVFrame
 	AbsTime    uint32
 	Delay      uint32
-	*zap.Logger
+	*log.Logger
 }
 
 func (r *AVRingReader) DecConfChanged() bool {
@@ -116,7 +117,7 @@ func (r *AVRingReader) Read(ctx context.Context, mode int) (err error) {
 			frame := r.ReadFrame()
 			r.beforeJump = frame.Timestamp - r.FirstTs
 			// 防止过快消费
-			if fast := time.Duration(r.beforeJump)*time.Millisecond - time.Since(r.startTime); fast > 0 && fast < time.Second {
+			if fast := r.beforeJump - time.Since(r.startTime); fast > 0 && fast < time.Second {
 				time.Sleep(fast)
 			}
 		}
@@ -125,17 +126,21 @@ func (r *AVRingReader) Read(ctx context.Context, mode int) (err error) {
 		r.ReadFrame()
 	}
 	r.AbsTime = uint32((r.Frame.Timestamp - r.SkipTs).Milliseconds())
+	if r.AbsTime == 0 {
+		r.AbsTime = 1
+	}
 	r.Delay = uint32((r.Track.LastValue.Timestamp - r.Frame.Timestamp).Milliseconds())
+	// fmt.Println(r.Track.Name, r.Delay)
 	// println(r.Track.Name, r.State, r.Frame.AbsTime, r.SkipTs, r.AbsTime)
 	return
 }
 func (r *AVRingReader) GetPTS32() uint32 {
-	return uint32((r.Frame.PTS - r.SkipTs * 90 / time.Millisecond))
+	return uint32((r.Frame.PTS - r.SkipTs*90/time.Millisecond))
 }
 func (r *AVRingReader) GetDTS32() uint32 {
-	return uint32((r.Frame.DTS - r.SkipTs * 90 / time.Millisecond))
+	return uint32((r.Frame.DTS - r.SkipTs*90/time.Millisecond))
 }
 func (r *AVRingReader) ResetAbsTime() {
 	r.SkipTs = r.Frame.Timestamp
-	r.AbsTime = 0
+	r.AbsTime = 1
 }
