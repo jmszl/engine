@@ -5,7 +5,6 @@ go 1.19
 require (
 	github.com/aler9/gortsplib/v2 v2.2.2
 	github.com/cnotch/ipchub v1.1.0
-	github.com/google/uuid v1.3.0
 	github.com/logrusorgru/aurora v2.0.3+incompatible
 	github.com/mcuadros/go-defaults v1.2.0
 	github.com/pion/rtp v1.7.13
@@ -25,7 +24,6 @@ require (
 )
 
 require (
-	github.com/denisbrodbeck/machineid v1.0.1
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-task/slim-sprig v0.0.0-20210107165309-348f09dbbbc0 // indirect
 	github.com/golang/mock v1.6.0 // indirect
