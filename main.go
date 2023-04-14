@@ -155,12 +155,12 @@ func Run(ctx context.Context, configFile string) (err error) {
 		fmt.Print(Colorize(" "+plugin+" ", BlackFg|RedBg|CrossedOutFm), " ")
 	}
 	fmt.Println()
-	fmt.Println(Bold(Cyan("官网地址: ")), Yellow("https://m7s.live"))
-	fmt.Println(Bold(Cyan("启动工程: ")), Yellow("https://github.com/langhuihui/monibuca"))
-	fmt.Println(Bold(Cyan("使用文档: ")), Yellow("https://m7s.live/guide/introduction.html"))
-	fmt.Println(Bold(Cyan("开发文档: ")), Yellow("https://m7s.live/devel/startup.html"))
-	fmt.Println(Bold(Cyan("视频教程: ")), Yellow("https://space.bilibili.com/328443019/channel/collectiondetail?sid=514619"))
-	fmt.Println(Bold(Cyan("远程界面: ")), Yellow("https://console.monibuca.com"))
+	//fmt.Println(Bold(Cyan("官网地址: ")), Yellow("https://m7s.live"))
+	//fmt.Println(Bold(Cyan("启动工程: ")), Yellow("https://github.com/langhuihui/monibuca"))
+	//fmt.Println(Bold(Cyan("使用文档: ")), Yellow("https://m7s.live/guide/introduction.html"))
+	//fmt.Println(Bold(Cyan("开发文档: ")), Yellow("https://m7s.live/devel/startup.html"))
+	//fmt.Println(Bold(Cyan("视频教程: ")), Yellow("https://space.bilibili.com/328443019/channel/collectiondetail?sid=514619"))
+	//fmt.Println(Bold(Cyan("远程界面: ")), Yellow("https://console.monibuca.com"))
 	//rp := struct {
 	//	UUID     string `json:"uuid"`
 	//	Machine  string `json:"machine"`
