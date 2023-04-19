@@ -179,12 +179,20 @@ func Run(ctx context.Context, configFile string) (err error) {
 	for {
 		select {
 		case event := <-EventBus:
+			ts := time.Now()
 			for _, plugin := range Plugins {
 				if !plugin.Disabled {
+					ts := time.Now()
 					plugin.Config.OnEvent(event)
+					if cost := time.Since(ts); cost > time.Millisecond*100 {
+						plugin.Warn("event cost too much time", zap.String("event", fmt.Sprintf("%v", event)), zap.Duration("cost", cost))
+					}
 				}
 			}
 			EngineConfig.OnEvent(event)
+			if cost := time.Since(ts); cost > time.Millisecond*100 {
+				log.Warn("event cost too much time", zap.String("event", fmt.Sprintf("%v", event)), zap.Duration("cost", cost))
+			}
 		case <-ctx.Done():
 			return
 			//case <-reportTimer.C:
