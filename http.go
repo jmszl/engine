@@ -35,28 +35,28 @@ func (conf *GlobalConfig) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 }
 
 func fetchSummary() *Summary {
-	return &summary
+	return &Sum
 }
 
 func (conf *GlobalConfig) API_summary(rw http.ResponseWriter, r *http.Request) {
 	y := ShouldYaml(r)
 	if r.Header.Get("Accept") == "text/event-stream" {
-		summary.Add()
-		defer summary.Done()
+		Sum.Add()
+		defer Sum.Done()
 		if y {
 			util.ReturnYaml(fetchSummary, time.Second, rw, r)
 		} else {
 			util.ReturnJson(fetchSummary, time.Second, rw, r)
 		}
 	} else {
-		if !summary.Running() {
-			summary.collect()
+		if !Sum.Running() {
+			Sum.collect()
 		}
 		if y {
-			if err := yaml.NewEncoder(rw).Encode(&summary); err != nil {
+			if err := yaml.NewEncoder(rw).Encode(&Sum); err != nil {
 				http.Error(rw, err.Error(), http.StatusInternalServerError)
 			}
-		} else if err := json.NewEncoder(rw).Encode(&summary); err != nil {
+		} else if err := json.NewEncoder(rw).Encode(&Sum); err != nil {
 			http.Error(rw, err.Error(), http.StatusInternalServerError)
 		}
 	}

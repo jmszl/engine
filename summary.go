@@ -12,12 +12,12 @@ import (
 	"m7s.live/engine/v4/util"
 )
 
-var summary Summary
+var Sum Summary
 var children util.Map[string, *Summary]
 
 func init() {
 	children.Init()
-	go summary.Start()
+	go Sum.Start()
 }
 
 // ServerSummary 系统摘要定义
@@ -55,10 +55,11 @@ type NetWorkInfo struct {
 func (s *Summary) Start() {
 	for range time.Tick(time.Second) {
 		if s.Running() {
-			summary.collect()
+			Sum.collect()
 		}
 	}
 }
+
 func (s *Summary) Point() *Summary {
 	return s
 }
@@ -127,5 +128,9 @@ func (s *Summary) collect() *Summary {
 	s.Streams = util.MapList(&Streams, func(name string, ss *Stream) StreamSummay {
 		return ss.Summary()
 	})
+	return s
+}
+
+func (s *Summary) Get() *Summary {
 	return s
 }
