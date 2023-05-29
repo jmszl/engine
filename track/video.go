@@ -32,6 +32,7 @@ func (v *Video) Attach() {
 	if v.Attached.CompareAndSwap(false, true) {
 		if err := v.Stream.AddTrack(v).Await(); err != nil {
 			v.Error("attach video track failed", zap.Error(err))
+			v.Attached.Store(false)
 		} else {
 			v.Info("video track attached", zap.Uint("width", v.Width), zap.Uint("height", v.Height))
 		}
@@ -92,6 +93,7 @@ func (vt *Video) computeGOP() {
 func (vt *Video) writeAnnexBSlice(nalu []byte) {
 	common.SplitAnnexB(nalu, vt.WriteSliceBytes, codec.NALU_Delimiter1)
 }
+
 func (vt *Video) WriteNalu(pts uint32, dts uint32, nalu []byte) {
 	if dts == 0 {
 		vt.generateTimestamp(pts)
@@ -103,6 +105,7 @@ func (vt *Video) WriteNalu(pts uint32, dts uint32, nalu []byte) {
 	vt.WriteSliceBytes(nalu)
 	vt.Flush()
 }
+
 func (vt *Video) WriteAnnexB(pts uint32, dts uint32, frame []byte) {
 	if dts == 0 {
 		vt.generateTimestamp(pts)

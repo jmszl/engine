@@ -59,7 +59,6 @@ func (s *Summary) Start() {
 		}
 	}
 }
-
 func (s *Summary) Point() *Summary {
 	return s
 }

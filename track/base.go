@@ -99,6 +99,16 @@ type Media struct {
 	流速控制
 }
 
+func (av *Media) GetFromPool(b util.IBytes) (item *util.ListItem[util.Buffer]) {
+	if b.Reuse() {
+		item = av.BytesPool.Get(b.Len())
+		copy(item.Value, b.Bytes())
+	} else {
+		return av.BytesPool.GetShell(b.Bytes())
+	}
+	return
+}
+
 func (av *Media) GetRBSize() int {
 	return av.RingBuffer.Size
 }
@@ -121,6 +131,8 @@ func (av *Media) SnapForJson() {
 	v := av.LastValue
 	if av.RawPart != nil {
 		av.RawPart = av.RawPart[:0]
+	} else {
+		av.RawPart = make([]int, 0, 10)
 	}
 	if av.RawSize = v.AUList.ByteLength; av.RawSize > 0 {
 		r := v.AUList.NewReader()
