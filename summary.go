@@ -16,11 +16,10 @@ var Sum Summary
 var children util.Map[string, *Summary]
 
 func init() {
-	children.Init()
 	go Sum.Start()
 }
 
-// ServerSummary 系统摘要定义
+// Summary 系统摘要定义
 type Summary struct {
 	Address string
 	Memory  struct {
@@ -51,7 +50,7 @@ type NetWorkInfo struct {
 	SentSpeed    uint64
 }
 
-// StartSummary 开始定时采集数据，每秒一次
+// Start 开始定时采集数据，每秒一次
 func (s *Summary) Start() {
 	for range time.Tick(time.Second) {
 		if s.Running() {
@@ -109,7 +108,7 @@ func (s *Summary) collect() *Summary {
 	s.HardDisk.Total = d.Total >> 30
 	s.HardDisk.Used = d.Used >> 30
 	s.HardDisk.Usage = d.UsedPercent
-	netWorks := []NetWorkInfo{}
+	var netWorks []NetWorkInfo
 	for i, n := range nv {
 		info := NetWorkInfo{
 			Name:    n.Name,
