@@ -2,11 +2,11 @@ package track
 
 import (
 	"io"
-	"time"
 
 	"go.uber.org/zap"
 	"m7s.live/engine/v4/codec"
 	. "m7s.live/engine/v4/common"
+	"m7s.live/engine/v4/log"
 	"m7s.live/engine/v4/util"
 )
 
@@ -19,7 +19,7 @@ type H264 struct {
 func NewH264(stream IStream, stuff ...any) (vt *H264) {
 	vt = &H264{}
 	vt.Video.CodecID = codec.CodecID_H264
-	vt.SetStuff("h264", int(256), byte(96), uint32(90000), stream, vt, time.Millisecond*10)
+	vt.SetStuff("h264", byte(96), uint32(90000), stream, vt)
 	vt.SetStuff(stuff...)
 	if vt.BytesPool == nil {
 		vt.BytesPool = make(util.BytesPool, 17)
@@ -32,7 +32,9 @@ func NewH264(stream IStream, stuff ...any) (vt *H264) {
 
 func (vt *H264) WriteSliceBytes(slice []byte) {
 	naluType := codec.ParseH264NALUType(slice[0])
-	vt.Trace("naluType", zap.Uint8("naluType", naluType.Byte()))
+	if log.Trace {
+		vt.Trace("naluType", zap.Uint8("naluType", naluType.Byte()))
+	}
 	switch naluType {
 	case codec.NALU_SPS:
 		spsInfo, _ := codec.ParseSPS(slice)
@@ -111,7 +113,7 @@ func (vt *H264) WriteRTPFrame(frame *RTPFrame) {
 		vt.lostFlag = true
 		vt.Warn("lost rtp packet", zap.Uint16("lastSeq", vt.lastSeq), zap.Uint16("lastSeq2", vt.lastSeq2))
 	}
-	rv := &vt.Value
+	rv := vt.Value
 	if naluType := frame.H264Type(); naluType < 24 {
 		vt.WriteSliceBytes(frame.Payload)
 	} else {
@@ -174,4 +176,10 @@ func (vt *H264) CompleteRTP(value *AVFrame) {
 		return true
 	})
 	vt.PacketizeRTP(out...)
+}
+
+func (vt *H264) GetNALU_SEI() (item *util.ListItem[util.Buffer]) {
+	item = vt.BytesPool.Get(1)
+	item.Value[0] = byte(codec.NALU_SEI)
+	return
 }

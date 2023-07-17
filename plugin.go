@@ -130,7 +130,7 @@ func (opt *Plugin) assign() {
 		opt.Disabled = false
 		//移除这个属性防止反序列化报错
 		delete(opt.RawConfig, "enable")
-	} 
+	}
 	if opt.Disabled {
 		opt.Warn("plugin disabled")
 		return
@@ -172,6 +172,9 @@ func (opt *Plugin) run() {
 	if conf, ok := opt.Config.(config.HTTPConfig); ok {
 		go conf.Listen(opt)
 	}
+	if conf, ok := opt.Config.(config.TCPConfig); ok {
+		go conf.ListenTCP(opt, opt.Config.(config.TCPPlugin))
+	}
 }
 
 // Update 热更新配置
@@ -186,12 +189,29 @@ func (opt *Plugin) registerHandler() {
 	// 注册http响应
 	for i, j := 0, t.NumMethod(); i < j; i++ {
 		name := t.Method(i).Name
-		if handler, ok := v.Method(i).Interface().(func(http.ResponseWriter, *http.Request)); ok {
-			patten := "/"
-			if name != "ServeHTTP" {
-				patten = strings.ToLower(strings.ReplaceAll(name, "_", "/"))
-			}
+		patten := "/"
+		if name != "ServeHTTP" {
+			patten = strings.ToLower(strings.ReplaceAll(name, "_", "/"))
+		}
+		switch handler := v.Method(i).Interface().(type) {
+		case func(http.ResponseWriter, *http.Request):
 			opt.handle(patten, http.HandlerFunc(handler))
+			// case func(*http.Request) (int, string, any):
+			// 	opt.handle(patten, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+			// 		code, msg, data := handler(r)
+			// 		switch returnMode {
+			// 		case "json":
+			// 			rw.Header().Set("Content-Type", "application/json")
+			// 			rw.WriteHeader(http.StatusOK)
+			// 			json.NewEncoder(rw).Encode(map[string]interface{}{
+			// 				"code": code,
+			// 				"msg":  msg,
+			// 				"data": data,
+			// 			})
+			// 		default:
+			// 			http.Error(rw, msg, code)
+			// 		}
+			// 	}))
 		}
 	}
 }

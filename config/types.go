@@ -30,15 +30,20 @@ type PushConfig interface {
 type Publish struct {
 	PubAudio          bool          `default:"true"`
 	PubVideo          bool          `default:"true"`
+	InsertSEI         bool          // 是否启用SEI插入
 	KickExist         bool          // 是否踢掉已经存在的发布者
 	PublishTimeout    time.Duration `default:"10s"` // 发布无数据超时
 	WaitCloseTimeout  time.Duration // 延迟自动关闭（等待重连）
 	DelayCloseTimeout time.Duration // 延迟自动关闭（无订阅时）
 	IdleTimeout       time.Duration // 空闲(无订阅)超时
+	PauseTimeout      time.Duration `default:"30s"` // 暂停超时
 	BufferTime        time.Duration // 缓冲长度(单位：秒)，0代表取最近关键帧
+	SpeedLimit        time.Duration `default:"500ms"` //速度限制最大等待时间
 	Key               string        // 发布鉴权key
 	SecretArgName     string        `default:"secret"` // 发布鉴权参数名
 	ExpireArgName     string        `default:"expire"` // 发布鉴权失效时间参数名
+	RingSize          int           `default:"256"`    // 初始缓冲区大小
+	RingSizeMax       int           `default:"1024"`   // 最大缓冲区大小
 }
 
 func (c Publish) GetPublishConfig() Publish {
@@ -57,9 +62,8 @@ type Subscribe struct {
 	SubDataTracks   []string      // 指定订阅的数据轨道
 	SubMode         int           // 0，实时模式：追赶发布者进度，在播放首屏后等待发布者的下一个关键帧，然后跳到该帧。1、首屏后不进行追赶。2、从缓冲最大的关键帧开始播放，也不追赶，需要发布者配置缓存长度
 	IFrameOnly      bool          // 只要关键帧
-	WaitTimeout     time.Duration `default:"10s"`  // 等待流超时
-	WriteBufferSize int           `default:"0"`    // 写缓冲大小
-	Poll            time.Duration `default:"20ms"` // 读取Ring时的轮询间隔,单位毫秒
+	WaitTimeout     time.Duration `default:"10s"` // 等待流超时
+	WriteBufferSize int           `default:"0"`   // 写缓冲大小
 	Key             string        // 订阅鉴权key
 	SecretArgName   string        `default:"secret"` // 订阅鉴权参数名
 	ExpireArgName   string        `default:"expire"` // 订阅鉴权失效时间参数名
@@ -113,7 +117,7 @@ func (p *Push) AddPush(url string, streamPath string) {
 }
 
 type Console struct {
-	Server        string `default:"console.monibuca.com:4242"` //远程控制台地址
+	Server        string `default:"console.monibuca.com:44944"` //远程控制台地址
 	Secret        string //远程控制台密钥
 	PublicAddr    string //公网地址，提供远程控制台访问的地址，不配置的话使用自动识别的地址
 	PublicAddrTLS string
@@ -123,8 +127,8 @@ type Engine struct {
 	Publish
 	Subscribe
 	HTTP
-	EnableAVCC     bool `default:"true"` //启用AVCC格式，rtmp协议使用
-	EnableRTP      bool `default:"true"` //启用RTP格式，rtsp、gb18181等协议使用
+	EnableAVCC     bool `default:"true"` //启用AVCC格式，rtmp、http-flv协议使用
+	EnableRTP      bool `default:"true"` //启用RTP格式，rtsp、webrtc等协议使用
 	EnableSubEvent bool `default:"true"` //启用订阅事件,禁用可以提高性能
 	EnableAuth     bool `default:"true"` //启用鉴权
 	Console
@@ -153,6 +157,7 @@ var Global *Engine
 func (cfg *Engine) InitDefaultHttp() {
 	Global = cfg
 	cfg.HTTP.mux = http.DefaultServeMux
+	cfg.HTTP.ListenAddrTLS = ":8443"
 	cfg.HTTP.ListenAddr = ":8080"
 }
 
@@ -243,7 +248,7 @@ func (cfg *Engine) OnEvent(event any) {
 		if strings.HasPrefix(cfg.Console.Server, "wss") {
 			go cfg.WsRemote()
 		} else {
-			go cfg.Remote(v)
+			go cfg.WtRemote(v)
 		}
 	}
 }

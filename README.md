@@ -25,7 +25,7 @@
 - 提供配置热更新机制
 ## 引擎自带HTTP接口
 - 获取某一个流的详情 `/api/stream?streamPath=xxx`
-- 终止某一个流 `/api/closeStream?streamPath=xxx`
+- 终止某一个流 `/api/closestream?streamPath=xxx`
 - 获取engine信息 `/api/sysInfo` 返回值{Version:xxx,StartTime:xxx,IP:[xxx.xxx.xxx.xxx]}
 - 获取系统基本情况 `/api/summary` 返回值Summary数据
 - 获取所有插件信息 `/api/plugins` 返回值Plugin数据
@@ -37,6 +37,7 @@
 - 获取所有远端拉流信息 `/api/list/pull` 返回{RemoteURL:"",StreamPath:"",Type:"",StartTime:""}
 - 获取所有向远端推流信息 `/api/list/push` 返回{RemoteURL:"",StreamPath:"",Type:"",StartTime:""}
 - 停止推流 `/api/stoppush?url=xxx` 停止向xxx推流 ，成功返回ok
+- 插入SEI帧 `/api/insertsei?streamPath=xxx&type=5` 向xxx流内插入SEI帧 ，成功返回ok。type为SEI类型，可选，默认是5
 # 引擎默认配置
 ```yaml
 global:
@@ -58,12 +59,12 @@ global:
       pubaudio: true # 是否发布音频流
       pubvideo: true # 是否发布视频流
       kickexist: false # 剔出已经存在的发布者，用于顶替原有发布者
+      insertsei: false # 是否开启插入SEI信息功能
       publishtimeout: 10s # 发布流默认过期时间，超过该时间发布者没有恢复流将被删除
       delayclosetimeout: 0 # 自动关闭触发后延迟的时间(期间内如果有新的订阅则取消触发关闭)，0为关闭该功能，保持连接。
       waitclosetimeout: 0 # 发布者断开后等待时间，超过该时间发布者没有恢复流将被删除，0为关闭该功能，由订阅者决定是否删除
       buffertime: 0 # 缓存时间，用于时光回溯，0为关闭缓存
       idletimeout: 0 # 空闲超时时间，0为不限制
-      poll: 20ms # 订阅者轮询时间，伪自选锁等待周期
       key:                      # 发布鉴权key
 	    secretargname: secret     # 发布鉴权参数名
 	    expireargname:   expire   # 发布鉴权失效时间参数名
@@ -79,7 +80,6 @@ global:
       iframeonly: false # 只订阅关键帧
       waittimeout: 10s # 等待发布者的超时时间，用于订阅尚未发布的流
       writebuffersize: 0 # 订阅者写缓存大小，用于减少io次数，但可能影响实时性
-      poll: 20ms # 订阅者轮询时间，伪自选锁等待周期
       key:                      # 订阅鉴权key
 	    secretargname: secret     # 订阅鉴权参数名
 	    expireargname:   expire   # 订阅鉴权失效时间参数名
@@ -88,7 +88,7 @@ global:
   enablertp : true # 启用rtp格式缓存，用于rtsp、websocket、gb28181协议
   enableauth: true # 启用鉴权,详细查看鉴权机制
   enablesubevent: true # 启用订阅事件，用于订阅者上下线事件,关闭可以提高性能
-  rtpreroderbufferlen: 50 # rtp乱序重排缓存长度
+  rtpreoderbufferlen: 50 # rtp乱序重排缓存长度
   speedlimit: 500ms # 限速超时时间 0为不限速，对于读取文件这类流需要限速，否则读取过快
   eventbussize: 10 # 事件总线缓存大小，事件较多时容易堵阻塞线程，需要增大缓存
   pulseinterval: 5s # 心跳事件间隔时间
