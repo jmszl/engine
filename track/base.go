@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 	. "m7s.live/engine/v4/common"
 	"m7s.live/engine/v4/config"
+	"m7s.live/engine/v4/log"
 	"m7s.live/engine/v4/util"
 )
 
@@ -61,29 +62,29 @@ type SpesificTrack interface {
 	WriteRTPFrame(*RTPFrame)
 	generateTimestamp(uint32)
 	WriteSequenceHead([]byte)
+	GetNALU_SEI() *util.ListItem[util.Buffer]
 	Flush()
 }
 
 type IDRingList struct {
-	util.List[*util.Ring[AVFrame]]
-	IDRing      *util.Ring[AVFrame]
-	HistoryRing *util.Ring[AVFrame]
+	IDRList     util.List[*util.Ring[*AVFrame]]
+	IDRing      *util.Ring[*AVFrame]
+	HistoryRing *util.Ring[*AVFrame]
 }
 
-func (p *IDRingList) AddIDR(IDRing *util.Ring[AVFrame]) {
-	p.PushValue(IDRing)
+func (p *IDRingList) AddIDR(IDRing *util.Ring[*AVFrame]) {
+	p.IDRList.PushValue(IDRing)
 	p.IDRing = IDRing
 }
 
 func (p *IDRingList) ShiftIDR() {
-	p.Shift()
-	p.HistoryRing = p.Next.Value
+	p.IDRList.Shift()
+	p.HistoryRing = p.IDRList.Next.Value
 }
 
 // Media 基础媒体Track类
 type Media struct {
-	Base
-	RingBuffer[AVFrame]
+	Base[any, *AVFrame]
 	PayloadType     byte
 	IDRingList      `json:"-" yaml:"-"` //最近的关键帧位置，首屏渲染
 	SSRC            uint32
@@ -99,6 +100,10 @@ type Media struct {
 	流速控制
 }
 
+func (av *Media) Dispose() {
+	av.Value.Broadcast()
+}
+
 func (av *Media) GetFromPool(b util.IBytes) (item *util.ListItem[util.Buffer]) {
 	if b.Reuse() {
 		item = av.BytesPool.Get(b.Len())
@@ -109,10 +114,6 @@ func (av *Media) GetFromPool(b util.IBytes) (item *util.ListItem[util.Buffer]) {
 	return
 }
 
-func (av *Media) GetRBSize() int {
-	return av.RingBuffer.Size
-}
-
 func (av *Media) GetRTPFromPool() (result *util.ListItem[RTPFrame]) {
 	result = av.RtpPool.Get()
 	if result.Value.Packet == nil {
@@ -121,8 +122,9 @@ func (av *Media) GetRTPFromPool() (result *util.ListItem[RTPFrame]) {
 		result.Value.SSRC = av.SSRC
 		result.Value.Version = 2
 		result.Value.Raw = make([]byte, 1460)
-		result.Value.Payload = result.Value.Raw[:0]
 	}
+	result.Value.Raw = result.Value.Raw[:1460]
+	result.Value.Payload = result.Value.Raw[:0]
 	return
 }
 
@@ -150,10 +152,12 @@ func (av *Media) SetStuff(stuff ...any) {
 	// 代表发布者已经离线，该Track成为遗留Track，等待下一任发布者接续发布
 	for _, s := range stuff {
 		switch v := s.(type) {
-		case int:
-			av.Init(v)
+		case IStream:
+			pubConf := v.GetPublisherConfig()
+			av.Base.SetStuff(v)
+			av.Init(pubConf.RingSize, NewAVFrame)
 			av.SSRC = uint32(uintptr(unsafe.Pointer(av)))
-			av.等待上限 = config.Global.SpeedLimit
+			av.等待上限 = pubConf.SpeedLimit
 		case uint32:
 			av.SampleRate = v
 		case byte:
@@ -172,19 +176,8 @@ func (av *Media) LastWriteTime() time.Time {
 	return av.LastValue.WriteTime
 }
 
-// func (av *Media) Play(ctx context.Context, onMedia func(*AVFrame) error) error {
-// 	for ar := av.ReadRing(); ctx.Err() == nil; ar.MoveNext() {
-// 		ap := ar.Read(ctx)
-// 		if err := onMedia(ap); err != nil {
-// 			// TODO: log err
-// 			return err
-// 		}
-// 	}
-// 	return ctx.Err()
-// }
-
 func (av *Media) CurrentFrame() *AVFrame {
-	return &av.Value
+	return av.Value
 }
 func (av *Media) PreFrame() *AVFrame {
 	return av.LastValue
@@ -209,11 +202,11 @@ func (av *Media) AppendAuBytes(b ...[]byte) {
 
 func (av *Media) narrow(gop int) {
 	if l := av.Size - gop; l > 12 {
-		// av.Debug("resize", zap.Int("before", av.Size), zap.Int("after", av.Size-5))
+		if log.Trace {
+			av.Trace("resize", zap.Int("before", av.Size), zap.Int("after", av.Size-5))
+		}
 		//缩小缓冲环节省内存
-		av.Reduce(5).Do(func(v AVFrame) {
-			v.Reset()
-		})
+		av.Reduce(5)
 	}
 }
 
@@ -229,7 +222,7 @@ func (av *Media) AddIDR() {
 }
 
 func (av *Media) Flush() {
-	curValue, preValue, nextValue := &av.Value, av.LastValue, av.Next()
+	curValue, preValue, nextValue := av.Value, av.LastValue, av.Next()
 	useDts := curValue.Timestamp == 0
 	if av.State == TrackStateOffline {
 		av.State = TrackStateOnline
@@ -273,18 +266,23 @@ func (av *Media) Flush() {
 			}
 			curValue.Timestamp = av.根据起始DTS计算绝对时间戳(curValue.DTS)
 		}
-		curValue.DeltaTime = uint32((curValue.Timestamp - preValue.Timestamp) / time.Millisecond)
+
+		curValue.DeltaTime = uint32(deltaTS(curValue.Timestamp, preValue.Timestamp) / time.Millisecond)
 	}
-	av.Trace("write", zap.Uint32("seq", curValue.Sequence), zap.Duration("dts", curValue.DTS), zap.Duration("dts delta", curValue.DTS-preValue.DTS), zap.Uint32("delta", curValue.DeltaTime), zap.Duration("timestamp", curValue.Timestamp))
+	if log.Trace {
+		av.Trace("write", zap.Uint32("seq", curValue.Sequence), zap.Duration("dts", curValue.DTS), zap.Duration("dts delta", curValue.DTS-preValue.DTS), zap.Uint32("delta", curValue.DeltaTime), zap.Duration("timestamp", curValue.Timestamp), zap.Int("au", curValue.AUList.Length), zap.Int("rtp", curValue.RTP.Length), zap.Int("avcc", curValue.AVCC.ByteLength), zap.Int("raw", curValue.AUList.ByteLength), zap.Int("bps", av.BPS))
+	}
 	bufferTime := av.Stream.GetPublisherConfig().BufferTime
-	if bufferTime > 0 && av.IDRingList.Length > 1 && curValue.Timestamp-av.IDRingList.Next.Next.Value.Value.Timestamp > bufferTime {
+	if bufferTime > 0 && av.IDRingList.IDRList.Length > 1 && deltaTS(curValue.Timestamp, av.IDRingList.IDRList.Next.Next.Value.Value.Timestamp) > bufferTime {
 		av.ShiftIDR()
 		av.narrow(int(curValue.Sequence - av.HistoryRing.Value.Sequence))
 	}
 	// 下一帧为订阅起始帧，即将覆盖，需要扩环
 	if nextValue == av.IDRing || nextValue == av.HistoryRing {
 		// if av.AVRing.Size < 512 {
-		// av.Stream.Debug("resize", zap.Int("before", av.Size), zap.Int("after", av.Size+5), zap.String("name", av.Name))
+		if log.Trace {
+			av.Stream.Trace("resize", zap.Int("before", av.Size), zap.Int("after", av.Size+5), zap.String("name", av.Name))
+		}
 		av.Glow(5)
 		// } else {
 		// 	av.Stream.Error("sub ring overflow", zap.Int("size", av.AVRing.Size), zap.String("name", av.Name))
@@ -301,14 +299,16 @@ func (av *Media) Flush() {
 			av.CompleteAVCC(curValue)
 		}
 	}
-	av.Base.Flush(&curValue.BaseFrame)
+	av.ComputeBPS(curValue.BytesIn)
+	av.Step()
 	if av.等待上限 > 0 {
 		av.控制流速(curValue.Timestamp, curValue.DTS)
 	}
-	preValue = curValue
-	curValue = av.MoveNext()
-	curValue.CanRead = false
-	curValue.Reset()
-	curValue.Sequence = av.MoveCount
-	preValue.CanRead = true
+}
+
+func deltaTS(curTs time.Duration, preTs time.Duration) time.Duration {
+	if curTs < preTs {
+		return curTs + (1<<32)*time.Millisecond - preTs
+	}
+	return curTs - preTs
 }

@@ -120,14 +120,15 @@ func (io *IO) Stop() {
 }
 
 var (
-	ErrBadStreamName  = errors.New("Stream Already Exist")
-	ErrBadTrackName   = errors.New("Track Already Exist")
-	ErrTrackMute      = errors.New("Track Mute")
-	ErrStreamIsClosed = errors.New("Stream Is Closed")
-	ErrPublisherLost  = errors.New("Publisher Lost")
-	ErrAuth           = errors.New("Auth Failed")
-	OnAuthSub         func(p *util.Promise[ISubscriber]) error
-	OnAuthPub         func(p *util.Promise[IPublisher]) error
+	ErrDuplicatePublish = errors.New("Duplicate Publish")
+	ErrBadStreamName    = errors.New("StreamPath Illegal")
+	ErrBadTrackName     = errors.New("Track Already Exist")
+	ErrTrackMute        = errors.New("Track Mute")
+	ErrStreamIsClosed   = errors.New("Stream Is Closed")
+	ErrPublisherLost    = errors.New("Publisher Lost")
+	ErrAuth             = errors.New("Auth Failed")
+	OnAuthSub           func(p *util.Promise[ISubscriber]) error
+	OnAuthPub           func(p *util.Promise[IPublisher]) error
 )
 
 func (io *IO) auth(key string, secret string, expire string) bool {
@@ -182,6 +183,8 @@ func (io *IO) receive(streamPath string, specific IIO) error {
 		conf := v.GetPublisher().Config
 		io.Type = strings.TrimSuffix(io.Type, "Publisher")
 		io.Info("publish")
+		s.pubLocker.Lock()
+		defer s.pubLocker.Unlock()
 		oldPublisher := s.Publisher
 		if oldPublisher != nil && !oldPublisher.IsClosed() {
 			// 根据配置是否剔出原来的发布者
@@ -191,12 +194,13 @@ func (io *IO) receive(streamPath string, specific IIO) error {
 			} else if oldPublisher == specific {
 				//断线重连
 			} else {
-				return ErrBadStreamName
+				return ErrDuplicatePublish
 			}
 		}
 		s.PublishTimeout = conf.PublishTimeout
 		s.DelayCloseTimeout = conf.DelayCloseTimeout
 		s.IdleTimeout = conf.IdleTimeout
+		s.PauseTimeout = conf.PauseTimeout
 		defer func() {
 			if err == nil {
 				if oldPublisher == nil {
@@ -230,7 +234,7 @@ func (io *IO) receive(streamPath string, specific IIO) error {
 			return err
 		}
 	} else {
-
+		conf := specific.(ISubscriber).GetSubscriber().Config
 		io.Type = strings.TrimSuffix(io.Type, "Subscriber")
 		io.Info("subscribe")
 		if create {
@@ -241,7 +245,7 @@ func (io *IO) receive(streamPath string, specific IIO) error {
 				specific.OnEvent(specific)
 			}
 		}()
-		if config.Global.EnableAuth {
+		if config.Global.EnableAuth && !conf.Internal {
 			onAuthSub := OnAuthSub
 			if auth, ok := specific.(AuthSub); ok {
 				onAuthSub = auth.OnAuth
@@ -254,7 +258,7 @@ func (io *IO) receive(streamPath string, specific IIO) error {
 				if err != nil {
 					return err
 				}
-			} else if conf := specific.(ISubscriber).GetSubscriber().Config; conf.Key != "" {
+			} else if conf.Key != "" {
 				if !io.auth(conf.Key, io.Args.Get(conf.SecretArgName), io.Args.Get(conf.ExpireArgName)) {
 					return ErrAuth
 				}

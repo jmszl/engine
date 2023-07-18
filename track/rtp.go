@@ -39,7 +39,7 @@ func (av *Media) WriteRTP(raw *util.ListItem[RTPFrame]) {
 			av.WriteRTPFrame(&frame.Value)
 			// av.Info("rtp", zap.Uint32("ts", (frame.Value.Timestamp)), zap.Int("len", len(frame.Value.Payload)), zap.Bool("marker", frame.Value.Marker), zap.Uint16("seq", frame.Value.SequenceNumber))
 		} else {
-			av.Warn("rtp payload is empty", zap.Uint32("ts", (frame.Value.Timestamp)), zap.Any("ext", frame.Value.GetExtensionIDs()), zap.Uint16("seq", frame.Value.SequenceNumber))
+			av.Debug("rtp payload is empty", zap.Uint32("ts", (frame.Value.Timestamp)), zap.Any("ext", frame.Value.GetExtensionIDs()), zap.Uint16("seq", frame.Value.SequenceNumber))
 			frame.Recycle()
 		}
 	}
@@ -53,7 +53,6 @@ func (av *Media) PacketizeRTP(payloads ...[][]byte) {
 		rtpItem = av.GetRTPFromPool()
 		packet := &rtpItem.Value
 		br := util.LimitBuffer{Buffer: packet.Payload}
-		br.Reset()
 		if av.SampleRate != 90000 {
 			packet.Timestamp = uint32(time.Duration(av.SampleRate) * av.Value.PTS / 90000)
 		} else {
