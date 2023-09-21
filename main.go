@@ -1,17 +1,23 @@
 package engine // import "m7s.live/engine/v4"
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"time"
 
-	. "github.com/logrusorgru/aurora"
+	"github.com/denisbrodbeck/machineid"
+	"github.com/google/uuid"
+	. "github.com/logrusorgru/aurora/v4"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/yaml.v3"
@@ -42,8 +48,8 @@ var (
 )
 
 func init() {
-	if settingDir := os.Getenv("M7S_SETTING_DIR"); settingDir != "" {
-		SettingDir = settingDir
+	if setting_dir := os.Getenv("M7S_SETTING_DIR"); setting_dir != "" {
+		SettingDir = setting_dir
 	}
 	if conn, err := net.Dial("udp", "114.114.114.114:80"); err == nil {
 		SysInfo.LocalIP, _, _ = strings.Cut(conn.LocalAddr().String(), ":")
@@ -51,36 +57,47 @@ func init() {
 }
 
 // Run 启动Monibuca引擎，传入总的Context，可用于关闭所有
-func Run(ctx context.Context, configFile string) (err error) {
+func Run(ctx context.Context, conf any) (err error) {
+	id, _ := machineid.ProtectedID("monibuca")
 	SysInfo.StartTime = time.Now()
 	SysInfo.Version = Engine.Version
 	Engine.Context = ctx
-	if _, err = os.Stat(configFile); err != nil {
-		configFile = filepath.Join(ExecDir, configFile)
+	var cg config.Config
+	switch v := conf.(type) {
+	case string:
+		if _, err = os.Stat(v); err != nil {
+			v = filepath.Join(ExecDir, v)
+		}
+		if ConfigRaw, err = os.ReadFile(v); err != nil {
+			log.Warn("read config file error:", err.Error())
+		}
+	case []byte:
+		ConfigRaw = v
+	case config.Config:
+		cg = v
 	}
+
 	if err = util.CreateShutdownScript(); err != nil {
 		log.Error("create shutdown script error:", err)
 	}
-	if ConfigRaw, err = ioutil.ReadFile(configFile); err != nil {
-		log.Warn("read config file error:", err.Error())
-	}
+
 	if err = os.MkdirAll(SettingDir, 0766); err != nil {
 		log.Error("create dir .m7s error:", err)
 		return
 	}
 	log.Info("Ⓜ starting engine:", Blink(Engine.Version))
-	var cg config.Config
 	if ConfigRaw != nil {
-		if err = yaml.Unmarshal(ConfigRaw, &cg); err == nil {
-			Engine.RawConfig = cg.GetChild("global")
-			if b, err := yaml.Marshal(Engine.RawConfig); err == nil {
-				Engine.Yaml = string(b)
-			}
-			//将配置信息同步到结构体
-			Engine.RawConfig.Unmarshal(&EngineConfig.Engine)
-		} else {
+		if err = yaml.Unmarshal(ConfigRaw, &cg); err != nil {
 			log.Error("parsing yml error:", err)
 		}
+	}
+	if cg != nil {
+		Engine.RawConfig = cg.GetChild("global")
+		if b, err := yaml.Marshal(Engine.RawConfig); err == nil {
+			Engine.Yaml = string(b)
+		}
+		//将配置信息同步到结构体
+		Engine.RawConfig.Unmarshal(&EngineConfig.Engine)
 	}
 	var logger log.Logger
 	log.LocaleLogger = logger.Lang(lang.Get(EngineConfig.LogLang))
@@ -101,6 +118,7 @@ func Run(ctx context.Context, configFile string) (err error) {
 	Engine.RawConfig = config.Struct2Config(&EngineConfig.Engine, "GLOBAL")
 	Engine.assign()
 	Engine.Logger.Debug("", zap.Any("config", EngineConfig))
+	util.PoolSize = EngineConfig.PoolSize
 	EventBus = make(chan any, EngineConfig.EventBusSize)
 	go EngineConfig.Listen(Engine)
 	for _, plugin := range plugins {
@@ -127,6 +145,11 @@ func Run(ctx context.Context, configFile string) (err error) {
 		}
 		plugin.assign()
 	}
+	UUID := uuid.NewString()
+	reportTimer := time.NewTicker(time.Minute)
+	contentBuf := bytes.NewBuffer(nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://console.monibuca.com/report", nil)
+	req.Header.Set("Content-Type", "application/json")
 	version := Engine.Version
 	if ver, ok := ctx.Value("version").(string); ok && ver != "" && ver != "dev" {
 		version = ver
@@ -147,7 +170,7 @@ func Run(ctx context.Context, configFile string) (err error) {
 	if EngineConfig.LogLang == "zh" {
 		fmt.Print("已运行的插件：")
 	} else {
-		fmt.Print("enabled plugins：")
+		fmt.Print("enabled plugins:")
 	}
 	for _, plugin := range enabledPlugins {
 		fmt.Print(Colorize(" "+plugin.Name+" ", BlackFg|GreenBg|BoldFm), " ")
@@ -156,12 +179,41 @@ func Run(ctx context.Context, configFile string) (err error) {
 	if EngineConfig.LogLang == "zh" {
 		fmt.Print("已禁用的插件：")
 	} else {
-		fmt.Print("disabled plugins：")
+		fmt.Print("disabled plugins:")
 	}
 	for _, plugin := range disabledPlugins {
 		fmt.Print(Colorize(" "+plugin.Name+" ", BlackFg|RedBg|CrossedOutFm), " ")
 	}
-
+	fmt.Println()
+	if EngineConfig.LogLang == "zh" {
+		fmt.Println(Cyan("🌏 官网地址: ").Bold(), Yellow("https://monibuca.com"))
+		fmt.Println(Cyan("🔥 启动工程: ").Bold(), Yellow("https://github.com/langhuihui/monibuca"))
+		fmt.Println(Cyan("📄 文档地址: ").Bold(), Yellow("https://monibuca.com/docs/index.html"))
+		fmt.Println(Cyan("🎞 视频教程: ").Bold(), Yellow("https://space.bilibili.com/328443019/channel/collectiondetail?sid=514619"))
+		fmt.Println(Cyan("🖥 远程界面: ").Bold(), Yellow("https://console.monibuca.com"))
+		fmt.Println(Yellow("关注公众号：不卡科技，获取更多信息"))
+	} else {
+		fmt.Println(Cyan("🌏 WebSite: ").Bold(), Yellow("https://m7s.live"))
+		fmt.Println(Cyan("🔥 Github: ").Bold(), Yellow("https://github.com/langhuihui/monibuca"))
+		fmt.Println(Cyan("📄 Docs: ").Bold(), Yellow("https://docs.m7s.live"))
+		fmt.Println(Cyan("🎞 Videos: ").Bold(), Yellow("https://space.bilibili.com/328443019/channel/collectiondetail?sid=514619"))
+		fmt.Println(Cyan("🖥 Console: ").Bold(), Yellow("https://console.monibuca.com"))
+	}
+	rp := struct {
+		UUID     string `json:"uuid"`
+		Machine  string `json:"machine"`
+		Instance string `json:"instance"`
+		Version  string `json:"version"`
+		OS       string `json:"os"`
+		Arch     string `json:"arch"`
+	}{UUID, id, EngineConfig.GetInstanceId(), version, runtime.GOOS, runtime.GOARCH}
+	json.NewEncoder(contentBuf).Encode(&rp)
+	req.Body = io.NopCloser(contentBuf)
+	if EngineConfig.Secret != "" {
+		EngineConfig.OnEvent(ctx)
+	}
+	var c http.Client
+	c.Do(req)
 	for _, plugin := range enabledPlugins {
 		plugin.Config.OnEvent(EngineConfig) //引擎初始化完成后，通知插件
 	}
@@ -182,6 +234,11 @@ func Run(ctx context.Context, configFile string) (err error) {
 			}
 		case <-ctx.Done():
 			return
+		case <-reportTimer.C:
+			contentBuf.Reset()
+			contentBuf.WriteString(fmt.Sprintf(`{"uuid":"`+UUID+`","streams":%d}`, Streams.Len()))
+			req.Body = io.NopCloser(contentBuf)
+			c.Do(req)
 		}
 	}
 }

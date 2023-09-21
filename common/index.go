@@ -23,21 +23,21 @@ const (
 
 // Base 基础Track类
 type Base[T any, F IDataFrame[T]] struct {
-	RingWriter[T, F] `json:"-" yaml:"-"`
-	Name             string
-	log.Zap          `json:"-" yaml:"-"`
-	Stream           IStream     `json:"-" yaml:"-"`
-	Attached         atomic.Bool `json:"-" yaml:"-"`
-	State            TrackState
-	ts               time.Time
-	bytes            int
-	frames           int
-	DropCount        int `json:"-" yaml:"-"` //丢帧数
-	BPS              int
-	FPS              int
-	Drops            int   // 丢帧率
-	RawSize          int   // 裸数据长度
-	RawPart          []int // 裸数据片段用于UI上显示
+	RingWriter[T, F]
+	Name      string
+	log.Zap   `json:"-" yaml:"-"`
+	Stream    IStream     `json:"-" yaml:"-"`
+	Attached  atomic.Bool `json:"-" yaml:"-"`
+	State     TrackState
+	ts        time.Time
+	bytes     int
+	frames    int
+	DropCount int `json:"-" yaml:"-"` //丢帧数
+	BPS       int
+	FPS       int
+	Drops     int   // 丢帧率
+	RawSize   int   // 裸数据长度
+	RawPart   []int // 裸数据片段用于UI上显示
 }
 
 func (bt *Base[T, F]) ComputeBPS(bytes int) {
@@ -92,6 +92,10 @@ func (bt *Base[T, F]) SetStuff(stuff ...any) {
 	}
 }
 
+func (bt *Base[T, F]) Dispose() {
+	bt.Value.Broadcast()
+}
+
 type Track interface {
 	GetName() string
 	GetBPS() int
@@ -113,6 +117,7 @@ type AVTrack interface {
 	WriteAVCC(ts uint32, frame *util.BLL) error //写入AVCC格式的数据
 	WriteRTP(*util.ListItem[RTPFrame])
 	WriteRTPPack(*rtp.Packet)
+	WriteSequenceHead(sh []byte)
 	Flush()
 	SetSpeedLimit(time.Duration)
 	GetRTPFromPool() *util.ListItem[RTPFrame]

@@ -40,10 +40,9 @@ type Publish struct {
 	BufferTime        time.Duration // 缓冲长度(单位：秒)，0代表取最近关键帧
 	SpeedLimit        time.Duration `default:"500ms"` //速度限制最大等待时间
 	Key               string        // 发布鉴权key
-	SecretArgName     string        `default:"secret"` // 发布鉴权参数名
-	ExpireArgName     string        `default:"expire"` // 发布鉴权失效时间参数名
-	RingSize          int           `default:"256"`    // 初始缓冲区大小
-	RingSizeMax       int           `default:"1024"`   // 最大缓冲区大小
+	SecretArgName     string        `default:"secret"`   // 发布鉴权参数名
+	ExpireArgName     string        `default:"expire"`   // 发布鉴权失效时间参数名
+	RingSize          string        `default:"256-1024"` // 初始缓冲区大小
 }
 
 func (c Publish) GetPublishConfig() Publish {
@@ -61,6 +60,7 @@ type Subscribe struct {
 	SubVideoTracks  []string      // 指定订阅的视频轨道
 	SubDataTracks   []string      // 指定订阅的数据轨道
 	SubMode         int           // 0，实时模式：追赶发布者进度，在播放首屏后等待发布者的下一个关键帧，然后跳到该帧。1、首屏后不进行追赶。2、从缓冲最大的关键帧开始播放，也不追赶，需要发布者配置缓存长度
+	SyncMode        int           // 0，采用时间戳同步，1，采用写入时间同步
 	IFrameOnly      bool          // 只要关键帧
 	WaitTimeout     time.Duration `default:"10s"` // 等待流超时
 	WriteBufferSize int           `default:"0"`   // 写缓冲大小
@@ -135,10 +135,10 @@ type Engine struct {
 	LogLang             string        `default:"zh"`    //日志语言
 	LogLevel            string        `default:"info"`  //日志级别
 	RTPReorderBufferLen int           `default:"50"`    //RTP重排序缓冲长度
-	SpeedLimit          time.Duration `default:"500ms"` //速度限制最大等待时间
 	EventBusSize        int           `default:"10"`    //事件总线大小
 	PulseInterval       time.Duration `default:"5s"`    //心跳事件间隔
 	DisableAll          bool          `default:"false"` //禁用所有插件
+	PoolSize            int           //内存池大小
 	enableReport        bool          `default:"false"` //启用报告,用于统计和监控
 	reportStream        quic.Stream   // console server connection
 	instanceId          string        // instance id 来自console
@@ -156,7 +156,7 @@ var Global *Engine
 
 func (cfg *Engine) InitDefaultHttp() {
 	Global = cfg
-	cfg.HTTP.mux = http.DefaultServeMux
+	cfg.HTTP.mux = http.NewServeMux()
 	cfg.HTTP.ListenAddrTLS = ":8443"
 	cfg.HTTP.ListenAddr = ":8080"
 }

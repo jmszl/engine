@@ -2,8 +2,6 @@ package track
 
 import (
 
-	// . "github.com/logrusorgru/aurora"
-
 	"time"
 
 	"github.com/pion/rtp"
@@ -262,8 +260,14 @@ func (vt *Video) Flush() {
 		vt.computeGOP()
 		vt.Stream.SetIDR(vt)
 	}
-	if !vt.Attached.Load() && vt.IDRing != nil && vt.SequenceHeadSeq > 0 {
-		defer vt.Attach()
+
+	if !vt.Attached.Load() {
+		if vt.IDRing != nil && vt.SequenceHeadSeq > 0 {
+			defer vt.Attach()
+		} else {
+			rv.Reset()
+			return
+		}
 	}
 
 	if vt.lostFlag {
