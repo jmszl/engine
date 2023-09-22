@@ -13,6 +13,7 @@ type ListItem[T any] struct {
 	Next, Pre *ListItem[T] `json:"-" yaml:"-"`
 	Pool      *List[T]     `json:"-" yaml:"-"` // 回收池
 	list      *List[T]
+	reset     bool // 是否需要重置
 }
 
 func (item *ListItem[T]) InsertBefore(insert *ListItem[T]) {
@@ -49,8 +50,18 @@ func (item *ListItem[T]) IsRoot() bool {
 }
 
 func (item *ListItem[T]) Recycle() {
-	if item.list != item.Pool && item.Pool != nil {
+	hasPool := item.list != item.Pool && item.Pool != nil && item.Pool.Length < PoolSize
+	if item.reset || !hasPool {
+		var null T
+		item.Value = null
+	}
+	if hasPool {
 		item.Pool.Push(item)
+	} else {
+		item.Pool = nil
+		item.list = nil
+		item.Next = nil
+		item.Pre = nil
 	}
 }
 
@@ -71,7 +82,7 @@ type List[T any] struct {
 }
 
 func (p *List[T]) PushValue(value T) {
-	p.Push(&ListItem[T]{Value: value})
+	p.Push(&ListItem[T]{Value: value, reset: true})
 }
 
 func (p *List[T]) Push(item *ListItem[T]) {
@@ -151,12 +162,6 @@ func (p *List[T]) Recycle() {
 	if p.Length != 0 {
 		panic("recycle list error")
 	}
-	// for item := p.Next; item != nil && item.list != nil && !item.IsRoot(); {
-	// 	next := item.Next
-	// 	item.Recycle()
-	// 	item = next
-	// }
-	// p.Clear()
 }
 
 // Transfer 把链表中的所有元素转移到另一个链表中

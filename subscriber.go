@@ -105,7 +105,7 @@ type ISubscriber interface {
 	PlayRaw()
 	PlayBlock(byte)
 	PlayFLV()
-	Stop()
+	Stop(reason ...zapcore.Field)
 	Subscribe(streamPath string, sub ISubscriber) error
 }
 
@@ -231,9 +231,15 @@ func (s *Subscriber) PlayBlock(subType byte) {
 	case SUBTYPE_RAW:
 		sendVideoFrame = func(frame *AVFrame) {
 			// fmt.Println("v", frame.Sequence, s.VideoReader.AbsTime, s.VideoReader.Delay)
+			if frame.AUList.ByteLength == 0 {
+				return
+			}
 			spesic.OnEvent(VideoFrame{frame, s.Video, s.VideoReader.AbsTime, s.VideoReader.GetPTS32(), s.VideoReader.GetDTS32()})
 		}
 		sendAudioFrame = func(frame *AVFrame) {
+			if frame.AUList.ByteLength == 0 {
+				return
+			}
 			// fmt.Println("a", s.AudioReader.Delay)
 			// fmt.Println("a", frame.Sequence, s.AudioReader.AbsTime)
 			spesic.OnEvent(AudioFrame{frame, s.Audio, s.AudioReader.AbsTime, s.AudioReader.GetPTS32(), s.AudioReader.GetDTS32()})
@@ -275,6 +281,9 @@ func (s *Subscriber) PlayBlock(subType byte) {
 			flvHeadCache[0] = t
 			result := append(FLVFrame{flvHeadCache[:11]}, avcc...)
 			dataSize := uint32(util.SizeOfBuffers(avcc))
+			if dataSize == 0 {
+				return
+			}
 			util.PutBE(flvHeadCache[1:4], dataSize)
 			util.PutBE(flvHeadCache[4:7], ts)
 			flvHeadCache[7] = byte(ts >> 24)
@@ -316,6 +325,9 @@ func (s *Subscriber) PlayBlock(subType byte) {
 		if hasVideo {
 			for ctx.Err() == nil {
 				err := s.VideoReader.ReadFrame(subMode)
+				if err == nil {
+					err = ctx.Err()
+				}
 				if err != nil {
 					stopReason = zap.Error(err)
 					return
@@ -328,7 +340,7 @@ func (s *Subscriber) PlayBlock(subType byte) {
 				}
 				if hasAudio {
 					if audioFrame != nil {
-						if videoFrame.Timestamp > audioFrame.Timestamp {
+						if util.Conditoinal(conf.SyncMode == 0, videoFrame.Timestamp > audioFrame.Timestamp, videoFrame.WriteTime.After(audioFrame.WriteTime)) {
 							// fmt.Println("switch audio", audioFrame.CanRead)
 							sendAudioFrame(audioFrame)
 							audioFrame = nil
@@ -361,6 +373,9 @@ func (s *Subscriber) PlayBlock(subType byte) {
 					}
 				}
 				err := s.AudioReader.ReadFrame(subMode)
+				if err == nil {
+					err = ctx.Err()
+				}
 				if err != nil {
 					stopReason = zap.Error(err)
 					return
@@ -372,8 +387,7 @@ func (s *Subscriber) PlayBlock(subType byte) {
 					sendAudioDecConf()
 				}
 				if hasVideo && videoFrame != nil {
-					if audioFrame.Timestamp > videoFrame.Timestamp {
-						// fmt.Println("switch video", videoFrame.CanRead)
+					if util.Conditoinal(conf.SyncMode == 0, audioFrame.Timestamp > videoFrame.Timestamp, audioFrame.WriteTime.After(videoFrame.WriteTime)) {
 						sendVideoFrame(videoFrame)
 						videoFrame = nil
 						break
@@ -398,27 +412,9 @@ func (s *Subscriber) PlayBlock(subType byte) {
 
 func (s *Subscriber) onStop(reason *zapcore.Field) {
 	if !s.Stream.IsClosed() {
-		s.Info("stop", *reason)
+		s.Info("play stop", *reason)
 		if !s.Config.Internal {
 			s.Stream.Receive(s.Spesific)
 		}
 	}
-}
-
-type IPusher interface {
-	ISubscriber
-	Push() error
-	Connect() error
-	init(string, string, *config.Push)
-	Reconnect() bool
-}
-type Pusher struct {
-	ClientIO[config.Push]
-}
-
-// 是否需要重连
-func (pub *Pusher) Reconnect() (result bool) {
-	result = pub.Config.RePush == -1 || pub.ReConnectCount <= pub.Config.RePush
-	pub.ReConnectCount++
-	return
 }

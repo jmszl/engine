@@ -5,6 +5,8 @@ import (
 	"net"
 )
 
+var PoolSize = 16
+
 type Recyclable interface {
 	Recycle()
 }
@@ -288,6 +290,7 @@ func (p BytesPool) GetShell(b []byte) (item *ListItem[Buffer]) {
 	}
 	item = p[0].PoolShift()
 	item.Value = b
+	item.reset = true
 	return
 }
 
@@ -306,6 +309,7 @@ func (p BytesPool) Get(size int) (item *ListItem[Buffer]) {
 	if item == nil {
 		item = &ListItem[Buffer]{
 			Value: make(Buffer, size),
+			reset: true,
 		}
 	}
 	return
@@ -314,10 +318,5 @@ func (p BytesPool) Get(size int) (item *ListItem[Buffer]) {
 type Pool[T any] List[T]
 
 func (p *Pool[T]) Get() (item *ListItem[T]) {
-	if item = (*List[T])(p).PoolShift(); item == nil {
-		item = &ListItem[T]{
-			Pool: (*List[T])(p),
-		}
-	}
-	return
+	return (*List[T])(p).PoolShift()
 }
