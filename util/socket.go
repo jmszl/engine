@@ -18,6 +18,10 @@ func FetchValue[T any](t T) func() T {
 }
 
 const (
+	APIStatusNotModified = 304
+)
+
+const (
 	APIErrorNone   = 0
 	APIErrorDecode = iota + 4000
 	APIErrorQueryParse
@@ -74,6 +78,8 @@ func ReturnError(code int, msg string, rw http.ResponseWriter, r *http.Request) 
 		switch true {
 		case code == 0:
 			http.Error(rw, msg, http.StatusOK)
+		case code == 304:
+			http.Error(rw, msg, http.StatusNotModified)
 		case code/10 == 404:
 			http.Error(rw, msg, http.StatusNotFound)
 		case code > 5000:
