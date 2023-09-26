@@ -13,11 +13,12 @@ import (
 )
 
 var (
-	summary SummaryUtil
+	summary     SummaryUtil
 	lastSummary Summary
-	children util.Map[string, *Summary]
+	children    util.Map[string, *Summary]
 	collectLock sync.RWMutex
 )
+
 // ServerSummary 系统摘要定义
 type Summary struct {
 	Address string
@@ -48,6 +49,7 @@ type NetWorkInfo struct {
 	SentSpeed    uint64
 }
 type SummaryUtil Summary
+
 // Report 上报数据
 func (s *Summary) Report(slave *Summary) {
 	children.Set(slave.Address, slave)
@@ -109,4 +111,7 @@ func (s *SummaryUtil) collect() *Summary {
 	})
 	lastSummary = Summary(*s)
 	return &lastSummary
+}
+func GetLatestSummary() *Summary {
+	return summary.collect()
 }
