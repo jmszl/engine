@@ -22,7 +22,7 @@ var engineConfig = zapcore.EncoderConfig{
 	MessageKey:     "M",
 	StacktraceKey:  "S",
 	LineEnding:     zapcore.DefaultLineEnding,
-	EncodeLevel:    zapcore.CapitalColorLevelEncoder,
+	EncodeLevel:    zapcore.CapitalLevelEncoder,
 	EncodeTime:     zapcore.TimeEncoderOfLayout("15:04:05"),
 	EncodeDuration: zapcore.StringDurationEncoder,
 	EncodeCaller:   zapcore.ShortCallerEncoder,
@@ -34,7 +34,7 @@ var engineConfig = zapcore.EncoderConfig{
 var LogLevel = zap.NewAtomicLevelAt(zap.DebugLevel)
 var Trace bool
 var logger *zap.Logger = zap.New(
-	zapcore.NewCore(zapcore.NewConsoleEncoder(engineConfig), zapcore.AddSync(multipleWriter), LogLevel),
+	zapcore.NewCore(zapcore.NewJSONEncoder(engineConfig), zapcore.AddSync(multipleWriter), LogLevel),
 )
 var sugaredLogger *zap.SugaredLogger = logger.Sugar()
 var LocaleLogger *Logger
