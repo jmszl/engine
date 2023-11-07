@@ -279,7 +279,7 @@ func (opt *Plugin) SubscribeExist(streamPath string, sub ISubscriber) error {
 	}
 	return opt.Subscribe(streamPath, sub)
 }
-func (opt *Plugin) AssignSubConfig(suber  *Subscriber) {
+func (opt *Plugin) AssignSubConfig(suber *Subscriber) {
 	if suber.Config == nil {
 		conf, ok := opt.Config.(config.SubscribeConfig)
 		if !ok {
@@ -292,6 +292,7 @@ func (opt *Plugin) AssignSubConfig(suber  *Subscriber) {
 		suber.ID = fmt.Sprintf("%d", uintptr(unsafe.Pointer(suber)))
 	}
 }
+
 // Subscribe 订阅一个流，如果流不存在则创建一个等待流
 func (opt *Plugin) Subscribe(streamPath string, sub ISubscriber) error {
 	suber := sub.GetSubscriber()
@@ -325,7 +326,7 @@ func (opt *Plugin) Pull(streamPath string, url string, puller IPuller, save int)
 	pullConf := conf.GetPullConfig()
 	if save < 2 {
 		zurl := zap.String("url", url)
-		zpath := zap.String("path", streamPath)
+		zpath := zap.String("stream", streamPath)
 		opt.Info("pull", zpath, zurl)
 		puller.init(streamPath, url, pullConf)
 		opt.AssignPubConfig(puller.GetPublisher())
