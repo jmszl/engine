@@ -86,16 +86,16 @@ var StreamFSM = [len(StateNames)]map[StreamAction]StreamState{
 		ACTION_CLOSE:          STATE_CLOSED,
 	},
 	{
-		ACTION_PUBLISHCLOSE: STATE_WAITPUBLISH,
-		ACTION_TIMEOUT:      STATE_WAITPUBLISH,
-		ACTION_LASTLEAVE:    STATE_WAITCLOSE,
-		ACTION_CLOSE:        STATE_CLOSED,
+		// ACTION_PUBLISHCLOSE: STATE_WAITPUBLISH,
+		ACTION_TIMEOUT:   STATE_WAITPUBLISH,
+		ACTION_LASTLEAVE: STATE_WAITCLOSE,
+		ACTION_CLOSE:     STATE_CLOSED,
 	},
 	{
-		ACTION_PUBLISHCLOSE: STATE_CLOSED,
-		ACTION_TIMEOUT:      STATE_CLOSED,
-		ACTION_FIRSTENTER:   STATE_PUBLISHING,
-		ACTION_CLOSE:        STATE_CLOSED,
+		// ACTION_PUBLISHCLOSE: STATE_CLOSED,
+		ACTION_TIMEOUT:    STATE_CLOSED,
+		ACTION_FIRSTENTER: STATE_PUBLISHING,
+		ACTION_CLOSE:      STATE_CLOSED,
 	},
 	{},
 }
@@ -523,14 +523,31 @@ func (s *Stream) run() {
 				if s.IsClosed() {
 					v.Reject(ErrStreamIsClosed)
 				}
-				republish := s.Publisher == v.Value                                  // 重复发布
-				kicked := !republish && s.Publisher != nil && s.Publisher.IsClosed() // 被踢下线
-				if !republish {
-					s.Publisher = v.Value
+				puber := v.Value.GetPublisher()
+				conf := puber.Config
+				republish := s.Publisher == v.Value // 重复发布
+				if republish {
+					s.Info("republish")
+					s.Tracks.Range(func(name string, t Track) {
+						t.SetStuff(TrackStateOffline)
+					})
 				}
-				if s.action(ACTION_PUBLISH) || republish || kicked {
-					v.Resolve()
-					if s.Publisher.GetPublisher().Config.InsertSEI {
+				needKick := !republish && s.Publisher != nil && conf.KickExist // 需要踢掉老的发布者
+				if needKick {
+					oldPuber := s.Publisher.GetPublisher()
+					s.Warn("kick", zap.String("old type", oldPuber.Type))
+					// 接管老的发布者的音视频轨道
+					puber.AudioTrack = oldPuber.AudioTrack
+					puber.VideoTrack = oldPuber.VideoTrack
+					s.Publisher.OnEvent(SEKick{CreateEvent[struct{}](util.Null)})
+				}
+				s.Publisher = v.Value
+				s.PublishTimeout = conf.PublishTimeout
+				s.DelayCloseTimeout = conf.DelayCloseTimeout
+				s.IdleTimeout = conf.IdleTimeout
+				s.PauseTimeout = conf.PauseTimeout
+				if s.action(ACTION_PUBLISH) || republish || needKick {
+					if conf.InsertSEI {
 						if s.Tracks.SEI == nil {
 							s.Tracks.SEI = track.NewDataTrack[[]byte]("sei")
 							s.Tracks.SEI.Locker = &sync.Mutex{}
@@ -540,7 +557,9 @@ func (s *Stream) run() {
 							}
 						}
 					}
+					v.Resolve()
 				} else {
+					s.Warn("duplicate publish")
 					v.Reject(ErrDuplicatePublish)
 				}
 			case *util.Promise[ISubscriber]:
@@ -655,7 +674,9 @@ func (s *Stream) run() {
 
 func (s *Stream) AddTrack(t Track) (promise *util.Promise[Track]) {
 	promise = util.NewPromise(t)
-	s.Receive(promise)
+	if !s.Receive(promise) {
+		promise.Reject(ErrStreamIsClosed)
+	}
 	return
 }
 

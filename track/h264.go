@@ -36,6 +36,10 @@ func (vt *H264) WriteSliceBytes(slice []byte) {
 	if len(slice) > 4 && bytes.Equal(slice[:4], codec.NALU_Delimiter2) {
 		slice = slice[4:] // 有些设备厂商不规范，所以需要移除前导的 00 00 00 01
 	}
+	if len(slice) == 0 {
+		vt.Error("H264 WriteSliceBytes got empty slice")
+		return
+	}
 	naluType := codec.ParseH264NALUType(slice[0])
 	if log.Trace {
 		vt.Trace("naluType", zap.Uint8("naluType", naluType.Byte()))
@@ -118,6 +122,13 @@ func (vt *H264) WriteAVCC(ts uint32, frame *util.BLL) (err error) {
 }
 
 func (vt *H264) WriteRTPFrame(rtpItem *util.ListItem[RTPFrame]) {
+	defer func() {
+		err := recover()
+		if err != nil {
+			vt.Error("WriteRTPFrame panic", zap.Any("err", err))
+			vt.Stream.Close()
+		}
+	}()
 	if vt.lastSeq != vt.lastSeq2+1 && vt.lastSeq2 != 0 {
 		vt.lostFlag = true
 		vt.Warn("lost rtp packet", zap.Uint16("lastSeq", vt.lastSeq), zap.Uint16("lastSeq2", vt.lastSeq2))
