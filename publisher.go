@@ -50,16 +50,11 @@ func (p *Publisher) Equal(p2 IPublisher) bool {
 }
 
 // func (p *Publisher) OnEvent(event any) {
-// 	switch v := event.(type) {
-// 	case IPublisher:
-// 		if p.Equal(v) { //第一任
-
-// 		} else { // 使用前任的track，因为订阅者都挂在前任的上面
-// 			p.AudioTrack = v.getAudioTrack()
-// 			p.VideoTrack = v.getVideoTrack()
-// 		}
-// 	default:
-// 		p.IO.OnEvent(event)
+// 	p.IO.OnEvent(event)
+// 	switch event.(type) {
+// 	case SEclose, SEKick:
+// 		p.AudioTrack = nil
+// 		p.VideoTrack = nil
 // 	}
 // }
 
@@ -72,8 +67,12 @@ func (p *Publisher) WriteAVCCVideo(ts uint32, frame *util.BLL, pool util.BytesPo
 		// https://github.com/veovera/enhanced-rtmp/blob/main/enhanced-rtmp-v1.pdf
 		if isExtHeader := b0 & 0b1000_0000; isExtHeader != 0 {
 			fourCC := frame.GetUintN(1, 4)
-			if fourCC == codec.FourCC_H265_32 {
+			switch fourCC {
+			case codec.FourCC_H265_32:
 				p.VideoTrack = track.NewH265(p.Stream, pool)
+				p.VideoTrack.WriteAVCC(ts, frame)
+			case codec.FourCC_AV1_32:
+				p.VideoTrack = track.NewAV1(p.Stream, pool)
 				p.VideoTrack.WriteAVCC(ts, frame)
 			}
 		} else {

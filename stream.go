@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -196,10 +197,13 @@ func (tracks *Tracks) MarshalJSON() ([]byte, error) {
 	return json.Marshal(trackList)
 }
 
+var streamIdGen atomic.Uint32
+
 // Stream 流定义
 type Stream struct {
 	timeout    *time.Timer //当前状态的超时定时器
 	actionChan util.SafeChan[any]
+	ID         uint32 // 流ID
 	*log.Logger
 	StartTime time.Time //创建时间
 	StreamTimeoutConfig
@@ -276,13 +280,14 @@ func findOrCreateStream(streamPath string, waitTimeout time.Duration) (s *Stream
 		AppName:    p[0],
 		StreamName: strings.Join(p[1:], "/"),
 		StartTime:  time.Now(),
-		Logger:     log.LocaleLogger.With(zap.String("stream", streamPath)),
 		timeout:    time.NewTimer(waitTimeout),
 	})
 	if s := actual.(*Stream); loaded {
 		s.Debug("Stream Found")
 		return s, false
 	} else {
+		s.ID = streamIdGen.Add(1)
+		s.Logger = log.LocaleLogger.With(zap.String("stream", streamPath), zap.Uint32("id", s.ID))
 		s.Subscribers.Init()
 		s.actionChan.Init(10)
 		s.Info("created")
@@ -507,11 +512,6 @@ func (s *Stream) run() {
 		case action, ok := <-s.actionChan.C:
 			if !ok {
 				return
-			} else if s.State == STATE_CLOSED {
-				if s.actionChan.Close() { //再次尝试关闭
-					return
-				}
-				continue
 			}
 			timeStart = time.Now()
 			switch v := action.(type) {
@@ -522,6 +522,7 @@ func (s *Stream) run() {
 				timeOutInfo = zap.String("action", "Publish")
 				if s.IsClosed() {
 					v.Reject(ErrStreamIsClosed)
+					break
 				}
 				puber := v.Value.GetPublisher()
 				conf := puber.Config
@@ -566,6 +567,7 @@ func (s *Stream) run() {
 				timeOutInfo = zap.String("action", "Subscribe")
 				if s.IsClosed() {
 					v.Reject(ErrStreamIsClosed)
+					break
 				}
 				suber := v.Value
 				io := suber.GetSubscriber()
@@ -623,6 +625,9 @@ func (s *Stream) run() {
 				s.onSuberClose(v)
 			case TrackRemoved:
 				timeOutInfo = zap.String("action", "TrackRemoved")
+				if s.IsClosed() {
+					break
+				}
 				name := v.GetName()
 				if t, ok := s.Tracks.LoadAndDelete(name); ok {
 					s.Info("track -1", zap.String("name", name))
@@ -631,6 +636,10 @@ func (s *Stream) run() {
 				}
 			case *util.Promise[Track]:
 				timeOutInfo = zap.String("action", "Track")
+				if s.IsClosed() {
+					v.Reject(ErrStreamIsClosed)
+					break
+				}
 				if s.State == STATE_WAITPUBLISH {
 					s.action(ACTION_PUBLISH)
 				}
@@ -667,6 +676,9 @@ func (s *Stream) run() {
 			default:
 				timeOutInfo = zap.String("action", "unknown")
 				s.Error("unknown action", timeOutInfo)
+			}
+			if s.IsClosed() && s.actionChan.Close() { //再次尝试关闭
+				return
 			}
 		}
 	}
