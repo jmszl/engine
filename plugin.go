@@ -23,13 +23,22 @@ import (
 )
 
 // InstallPlugin 安装插件，传入插件配置生成插件信息对象
-func InstallPlugin(config config.Plugin) *Plugin {
+func InstallPlugin(config config.Plugin, options ...any) *Plugin {
 	defaults.SetDefaults(config)
 	t := reflect.TypeOf(config).Elem()
 	name := strings.TrimSuffix(t.Name(), "Config")
 	plugin := &Plugin{
 		Name:   name,
 		Config: config,
+	}
+	for _, v := range options {
+		switch v := v.(type) {
+		case DefaultYaml:
+			plugin.defaultYaml = v
+		case string:
+			name = v
+			plugin.Name = name
+		}
 	}
 	_, pluginFilePath, _, _ := runtime.Caller(1)
 	configDir := filepath.Dir(pluginFilePath)
@@ -52,6 +61,7 @@ func InstallPlugin(config config.Plugin) *Plugin {
 }
 
 type FirstConfig *config.Config
+type UpdateConfig *config.Config
 type DefaultYaml string
 
 // Plugin 插件信息
@@ -62,6 +72,7 @@ type Plugin struct {
 	Config             config.Plugin `json:"-" yaml:"-"` //类型化的插件配置
 	Version            string        //插件版本
 	RawConfig          config.Config //最终合并后的配置的map形式方便查询
+	defaultYaml        DefaultYaml   //默认配置
 	*log.Logger        `json:"-" yaml:"-"`
 	saveTimer          *time.Timer //用于保存的时候的延迟，防抖
 	Disabled           bool
@@ -102,6 +113,9 @@ func (opt *Plugin) assign() {
 	if err == nil {
 		var modifyConfig map[string]any
 		err = yaml.NewDecoder(f).Decode(&modifyConfig)
+		if err != nil {
+			panic(err)
+		}
 		opt.RawConfig.ParseModifyFile(modifyConfig)
 	}
 	opt.registerHandler()
@@ -124,7 +138,7 @@ func (opt *Plugin) run() {
 
 // Update 热更新配置
 func (opt *Plugin) Update(conf *config.Config) {
-	opt.Config.OnEvent(conf)
+	opt.Config.OnEvent(UpdateConfig(conf))
 }
 
 func (opt *Plugin) registerHandler() {
@@ -133,14 +147,17 @@ func (opt *Plugin) registerHandler() {
 	// 注册http响应
 	for i, j := 0, t.NumMethod(); i < j; i++ {
 		name := t.Method(i).Name
-		patten := "/"
-		if name != "ServeHTTP" {
-			patten = strings.ToLower(strings.ReplaceAll(name, "_", "/"))
+		if name == "ServeHTTP" {
+			continue
 		}
 		switch handler := v.Method(i).Interface().(type) {
 		case func(http.ResponseWriter, *http.Request):
+			patten := strings.ToLower(strings.ReplaceAll(name, "_", "/"))
 			opt.handle(patten, http.HandlerFunc(handler))
 		}
+	}
+	if rootHandler, ok := opt.Config.(http.Handler); ok {
+		opt.handle("/", rootHandler)
 	}
 }
 
@@ -154,6 +171,10 @@ func (opt *Plugin) Save() error {
 		opt.saveTimer = time.AfterFunc(time.Second, func() {
 			lock.Lock()
 			defer lock.Unlock()
+			if opt.RawConfig.Modify == nil {
+				os.Remove(opt.settingPath())
+				return
+			}
 			file, err := os.OpenFile(opt.settingPath(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 			if err == nil {
 				defer file.Close()
@@ -261,11 +282,26 @@ func (opt *Plugin) Pull(streamPath string, url string, puller IPuller, save int)
 	}
 	switch save {
 	case 1:
-		pullConf.AddPullOnStart(streamPath, url)
-		opt.RawConfig.Get("pull").Get("pullonstart").Modify = pullConf.PullOnStart
+		pullConf.PullOnStartLocker.Lock()
+		defer pullConf.PullOnStartLocker.Unlock()
+		m := map[string]string{streamPath: url}
+		opt.RawConfig.ParseModifyFile(map[string]any{
+			"pull": map[string]any{
+				"pullonstart": m,
+			},
+		})
 	case 2:
-		pullConf.AddPullOnSub(streamPath, url)
-		opt.RawConfig.Get("pull").Get("pullonsub").Modify = pullConf.PullOnSub
+		pullConf.PullOnSubLocker.Lock()
+		defer pullConf.PullOnSubLocker.Unlock()
+		m := map[string]string{streamPath: url}
+		for id := range pullConf.PullOnSub {
+			m[id] = pullConf.PullOnSub[id]
+		}
+		opt.RawConfig.ParseModifyFile(map[string]any{
+			"pull": map[string]any{
+				"pullonsub": m,
+			},
+		})
 	}
 	if save > 0 {
 		if err = opt.Save(); err != nil {
