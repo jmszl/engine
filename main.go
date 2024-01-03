@@ -3,7 +3,6 @@ package engine // import "m7s.live/engine/v4"
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,9 +41,9 @@ func init() {
 	if setting_dir := os.Getenv("M7S_SETTING_DIR"); setting_dir != "" {
 		SettingDir = setting_dir
 	}
-	if conn, err := net.Dial("udp", "114.114.114.114:80"); err == nil {
-		SysInfo.LocalIP, _, _ = strings.Cut(conn.LocalAddr().String(), ":")
-	}
+	//if conn, err := net.Dial("udp", "114.114.114.114:80"); err == nil {
+	//	SysInfo.LocalIP, _, _ = strings.Cut(conn.LocalAddr().String(), ":")
+	//}
 }
 
 // Run 启动Monibuca引擎，传入总的Context，可用于关闭所有

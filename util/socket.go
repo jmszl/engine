@@ -211,12 +211,13 @@ func CORS(next http.Handler) http.Handler {
 		header.Set("Access-Control-Allow-Credentials", "true")
 		header.Set("Cross-Origin-Resource-Policy", "cross-origin")
 		header.Set("Access-Control-Allow-Headers", "Content-Type,Access-Token")
-		origin := r.Header["Origin"]
-		if len(origin) == 0 {
-			header.Set("Access-Control-Allow-Origin", "*")
-		} else {
-			header.Set("Access-Control-Allow-Origin", origin[0])
-		}
+		//origin := r.Header["Origin"]
+		header.Set("Access-Control-Allow-Origin", "*")
+		//if len(origin) == 0 {
+		//	header.Set("Access-Control-Allow-Origin", "*")
+		//} else {
+		//	header.Set("Access-Control-Allow-Origin", origin[0])
+		//}
 		if next != nil && r.Method != "OPTIONS" {
 			next.ServeHTTP(w, r)
 		}
