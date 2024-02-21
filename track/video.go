@@ -22,9 +22,9 @@ type Video struct {
 	lostFlag    bool // 是否丢帧
 	codec.SPSInfo
 	ParamaterSets `json:"-" yaml:"-"`
-	SPS           []byte              `json:"-" yaml:"-"`
-	PPS           []byte              `json:"-" yaml:"-"`
-	SEIReader     *DataReader[[]byte] `json:"-" yaml:"-"`
+	SPS           []byte      `json:"-" yaml:"-"`
+	PPS           []byte      `json:"-" yaml:"-"`
+	SEIReader     chan []byte `json:"-" yaml:"-"`
 }
 
 func (v *Video) Attach() {
@@ -222,6 +222,7 @@ func (vt *Video) CompleteAVCC(rv *AVFrame) {
 	}
 	b[1] = 1
 	// println(rv.PTS < rv.DTS, "\t", rv.PTS, "\t", rv.DTS, "\t", rv.PTS-rv.DTS)
+	// vt.Info("cts", zap.Uint32("cts", uint32((rv.PTS-rv.DTS)/90)))
 	// 写入CTS
 	util.PutBE(b[2:5], (rv.PTS-rv.DTS)/90)
 	rv.AVCC.Push(mem)
@@ -248,14 +249,16 @@ func (vt *Video) CompleteAVCC(rv *AVFrame) {
 
 func (vt *Video) Flush() {
 	rv := vt.Value
-	if vt.SEIReader != nil {
-		if seiFrame, err := vt.SEIReader.TryRead(); seiFrame != nil {
+	if vt.SEIReader != nil && len(vt.SEIReader) > 0 {
+		for seiFrame := range vt.SEIReader {
 			var au util.BLL
 			au.Push(vt.SpesificTrack.GetNALU_SEI())
-			au.Push(vt.BytesPool.GetShell(seiFrame.Data))
+			au.Push(vt.BytesPool.GetShell(seiFrame))
+			vt.Info("sei", zap.Int("len", len(seiFrame)))
 			vt.Value.AUList.UnshiftValue(&au)
-		} else if err != nil {
-			vt.SEIReader = nil
+			if len(vt.SEIReader) == 0 {
+				break
+			}
 		}
 	}
 	if rv.IFrame {

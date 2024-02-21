@@ -104,7 +104,7 @@ func (r *AVRingReader) ReadFrame(mode int) (err error) {
 			if err = r.Read(r.Track.IDRing); err != nil {
 				return
 			}
-			r.SkipTs = r.Value.Timestamp - r.beforeJump - r.StartTs
+			r.SkipTs = r.Value.Timestamp - r.beforeJump - r.StartTs - 10*time.Millisecond
 			r.Info("jump", zap.Uint32("skipSeq", r.Track.IDRing.Value.Sequence-r.FirstSeq), zap.Duration("skipTs", r.SkipTs))
 			r.State = READSTATE_NORMAL
 		} else {
@@ -129,7 +129,7 @@ func (r *AVRingReader) ReadFrame(mode int) (err error) {
 	// r.Delay = uint32((r.Track.LastValue.Timestamp - r.Value.Timestamp).Milliseconds())
 	r.Delay = uint32(r.Track.LastValue.Sequence - r.Value.Sequence)
 	// fmt.Println(r.Track.Name, r.Delay)
-	// fmt.Println(r.Track.Name, r.State, r.Value.Timestamp, r.SkipTs, r.AbsTime)
+	// fmt.Println(r.Track.Name, r.Value.Sequence, r.Delay, r.AbsTime)
 	return
 }
 func (r *AVRingReader) GetPTS32() uint32 {
