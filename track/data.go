@@ -99,7 +99,7 @@ func NewRecycleDataTrack[T util.Recyclable](name string) (dt *RecycleData[T]) {
 }
 
 type BytesData struct {
-	RecycleData[*util.ListItem[util.Buffer]]
+	RecycleData[util.LIBP]
 	Pool util.BytesPool
 }
 

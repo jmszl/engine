@@ -48,7 +48,7 @@ func (vt *AV1) WriteSequenceHead(head []byte) (err error) {
 	return
 }
 
-func (vt *AV1) WriteRTPFrame(rtpItem *util.ListItem[RTPFrame]) {
+func (vt *AV1) WriteRTPFrame(rtpItem *LIRTP) {
 	defer func() {
 		err := recover()
 		if err != nil {

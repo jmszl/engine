@@ -285,6 +285,10 @@ func (opt *Plugin) Pull(streamPath string, url string, puller IPuller, save int)
 		pullConf.PullOnStartLocker.Lock()
 		defer pullConf.PullOnStartLocker.Unlock()
 		m := map[string]string{streamPath: url}
+		for id := range pullConf.PullOnStart {
+			m[id] = pullConf.PullOnStart[id]
+		}
+		m[streamPath] = url
 		opt.RawConfig.ParseModifyFile(map[string]any{
 			"pull": map[string]any{
 				"pullonstart": m,
@@ -297,6 +301,8 @@ func (opt *Plugin) Pull(streamPath string, url string, puller IPuller, save int)
 		for id := range pullConf.PullOnSub {
 			m[id] = pullConf.PullOnSub[id]
 		}
+		m[streamPath] = url
+		pullConf.PullOnSub[streamPath] = url
 		opt.RawConfig.ParseModifyFile(map[string]any{
 			"pull": map[string]any{
 				"pullonsub": m,

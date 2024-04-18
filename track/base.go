@@ -68,6 +68,8 @@ func (bt *Base[T, F]) SnapForJson() {
 func (bt *Base[T, F]) SetStuff(stuff ...any) {
 	for _, s := range stuff {
 		switch v := s.(type) {
+		case common.IStream:
+			bt.Zap = v.With(zap.String("track", bt.Name))
 		case common.IPuber:
 			bt.Publisher = v
 			bt.Zap = v.With(zap.String("track", bt.Name))

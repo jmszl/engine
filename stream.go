@@ -357,7 +357,7 @@ func (r *Stream) action(action StreamAction) (ok bool) {
 			stateEvent = SEclose{event}
 			r.Subscribers.Broadcast(stateEvent)
 			r.Tracks.Range(func(_ string, t common.Track) {
-				if t.GetPublisher().GetStream() == r {
+				if t.GetPublisher() == nil || t.GetPublisher().GetStream() == r {
 					t.Dispose()
 				}
 			})

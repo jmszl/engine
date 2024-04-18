@@ -57,7 +57,7 @@ func (g711 *G711) WriteAVCC(ts uint32, frame *util.BLL) error {
 	return nil
 }
 
-func (g711 *G711) WriteRTPFrame(rtpItem *util.ListItem[RTPFrame]) {
+func (g711 *G711) WriteRTPFrame(rtpItem *LIRTP) {
 	frame := &rtpItem.Value
 	g711.Value.RTP.Push(rtpItem)
 	if g711.SampleRate != 90000 {

@@ -28,7 +28,7 @@ func (av *Media) WriteRTPPack(p *rtp.Packet) {
 }
 
 // WriteRTPFrame 写入未反序列化的RTP包, 未排序的
-func (av *Media) WriteRTP(raw *util.ListItem[RTPFrame]) {
+func (av *Media) WriteRTP(raw *LIRTP) {
 	for frame := av.recorderRTP(raw); frame != nil; frame = av.nextRTPFrame() {
 		frame.Value.SSRC = av.SSRC
 		av.Value.BytesIn += len(frame.Value.Payload) + 12
@@ -46,7 +46,7 @@ func (av *Media) WriteRTP(raw *util.ListItem[RTPFrame]) {
 // https://www.cnblogs.com/moonwalk/p/15903760.html
 // Packetize packetizes the payload of an RTP packet and returns one or more RTP packets
 func (av *Media) PacketizeRTP(payloads ...[][]byte) {
-	var rtpItem *util.ListItem[RTPFrame]
+	var rtpItem *LIRTP
 	for _, pp := range payloads {
 		rtpItem = av.GetRTPFromPool()
 		packet := &rtpItem.Value
@@ -78,11 +78,11 @@ func (av *Media) PacketizeRTP(payloads ...[][]byte) {
 type RTPDemuxer struct {
 	lastSeq  uint16 //上一个rtp包的序号
 	lastSeq2 uint16 //上上一个rtp包的序号
-	乱序重排     util.RTPReorder[*util.ListItem[RTPFrame]]
+	乱序重排     util.RTPReorder[*LIRTP]
 }
 
 // 获取缓存中下一个rtpFrame
-func (av *RTPDemuxer) nextRTPFrame() (frame *util.ListItem[RTPFrame]) {
+func (av *RTPDemuxer) nextRTPFrame() (frame *LIRTP) {
 	frame = av.乱序重排.Pop()
 	if frame == nil {
 		return
@@ -93,7 +93,7 @@ func (av *RTPDemuxer) nextRTPFrame() (frame *util.ListItem[RTPFrame]) {
 }
 
 // 对RTP包乱序重排
-func (av *RTPDemuxer) recorderRTP(item *util.ListItem[RTPFrame]) (frame *util.ListItem[RTPFrame]) {
+func (av *RTPDemuxer) recorderRTP(item *LIRTP) (frame *LIRTP) {
 	frame = av.乱序重排.Push(item.Value.SequenceNumber, item)
 	if frame == nil {
 		return

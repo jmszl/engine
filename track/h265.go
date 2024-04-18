@@ -97,7 +97,7 @@ func (vt *H265) WriteSequenceHead(head []byte) (err error) {
 	return
 }
 
-func (vt *H265) WriteRTPFrame(rtpItem *util.ListItem[RTPFrame]) {
+func (vt *H265) WriteRTPFrame(rtpItem *LIRTP) {
 	defer func() {
 		err := recover()
 		if err != nil {
@@ -218,7 +218,7 @@ func (vt *H265) CompleteRTP(value *AVFrame) {
 	vt.PacketizeRTP(out...)
 }
 
-func (vt *H265) GetNALU_SEI() (item *util.ListItem[util.Buffer]) {
+func (vt *H265) GetNALU_SEI() (item util.LIBP) {
 	item = vt.BytesPool.Get(1)
 	item.Value[0] = 0b10000000 | byte(codec.NAL_UNIT_SEI<<1)
 	return

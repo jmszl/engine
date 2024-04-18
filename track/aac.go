@@ -69,7 +69,7 @@ func (aac *AAC) WriteADTS(ts uint32, b util.IBytes) {
 }
 
 // https://datatracker.ietf.org/doc/html/rfc3640#section-3.2.1
-func (aac *AAC) WriteRTPFrame(rtpItem *util.ListItem[RTPFrame]) {
+func (aac *AAC) WriteRTPFrame(rtpItem *LIRTP) {
 	aac.Value.RTP.Push(rtpItem)
 	frame := &rtpItem.Value
 	if len(frame.Payload) < 2 {

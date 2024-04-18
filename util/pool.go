@@ -11,12 +11,12 @@ type Recyclable interface {
 	Recycle()
 }
 type BLLReader struct {
-	*ListItem[Buffer]
+	LIBP
 	pos int
 }
 
 func (r *BLLReader) CanRead() bool {
-	return r.ListItem != nil && !r.IsRoot()
+	return r.LIBP != nil && !r.IsRoot()
 }
 
 func (r *BLLReader) Skip(n int) (err error) {
@@ -27,7 +27,7 @@ func (r *BLLReader) Skip(n int) (err error) {
 			return
 		}
 		n -= l
-		r.ListItem = r.Next
+		r.LIBP = r.Next
 		r.pos = 0
 	}
 	return io.EOF
@@ -41,7 +41,7 @@ func (r *BLLReader) ReadByte() (b byte, err error) {
 			r.pos++
 			return
 		}
-		r.ListItem = r.Next
+		r.LIBP = r.Next
 		r.pos = 0
 	}
 	return 0, io.EOF
@@ -88,7 +88,7 @@ func (r *BLLReader) ReadN(n int) (result net.Buffers) {
 		}
 		result = append(result, r.Value[r.pos:])
 		n -= l
-		r.ListItem = r.Next
+		r.LIBP = r.Next
 		r.pos = 0
 	}
 	return
@@ -105,7 +105,7 @@ func (r *BLLReader) WriteNTo(n int, result *net.Buffers) (actual int) {
 		}
 		*result = append(*result, r.Value[r.pos:])
 		n -= l
-		r.ListItem = r.Next
+		r.LIBP = r.Next
 		r.pos = 0
 	}
 	return actual - n
@@ -152,7 +152,7 @@ func (list *BLLs) PushValue(item *BLL) {
 	list.ByteLength += item.ByteLength
 }
 
-func (list *BLLs) Push(item *ListItem[Buffer]) {
+func (list *BLLs) Push(item LIBP) {
 	if list == nil {
 		return
 	}
@@ -220,7 +220,7 @@ func (list *BLL) NewReader() *BLLReader {
 // 	list.ByteLength += list2.ByteLength
 // }
 
-func (list *BLL) Push(item *ListItem[Buffer]) {
+func (list *BLL) Push(item LIBP) {
 	if list == nil {
 		return
 	}
@@ -228,7 +228,7 @@ func (list *BLL) Push(item *ListItem[Buffer]) {
 	list.ByteLength += item.Value.Len()
 }
 
-func (list *BLL) Shift() (item *ListItem[Buffer]) {
+func (list *BLL) Shift() (item LIBP) {
 	if list == nil || list.Length == 0 {
 		return
 	}
@@ -304,7 +304,7 @@ func (list *BLL) GetUintN(index int, n int) (result uint32) {
 type BytesPool []List[Buffer]
 
 // 获取来自真实内存的切片的——假内存块，即只回收外壳
-func (p BytesPool) GetShell(b []byte) (item *ListItem[Buffer]) {
+func (p BytesPool) GetShell(b []byte) (item LIBP) {
 	if len(p) == 0 {
 		return &ListItem[Buffer]{Value: b}
 	}
@@ -314,7 +314,7 @@ func (p BytesPool) GetShell(b []byte) (item *ListItem[Buffer]) {
 	return
 }
 
-func (p BytesPool) Get(size int) (item *ListItem[Buffer]) {
+func (p BytesPool) Get(size int) (item LIBP) {
 	for i := 1; i < len(p); i++ {
 		if level := 1 << i; level >= size {
 			if item = p[i].PoolShift(); cap(item.Value) > 0 {
@@ -340,3 +340,6 @@ type Pool[T any] List[T]
 func (p *Pool[T]) Get() (item *ListItem[T]) {
 	return (*List[T])(p).PoolShift()
 }
+
+type LIB = ListItem[Buffer]
+type LIBP = *LIB

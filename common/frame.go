@@ -21,7 +21,7 @@ func SplitAnnexB[T ~[]byte](frame T, process func(T), delimiter []byte) {
 		}
 	}
 }
-
+type LIRTP = util.ListItem[RTPFrame]
 type RTPFrame struct {
 	*rtp.Packet
 	Raw []byte
@@ -122,11 +122,11 @@ type AVFrame struct {
 	IFrame    bool
 	PTS       time.Duration
 	DTS       time.Duration
-	Timestamp time.Duration               // 绝对时间戳
-	ADTS      *util.ListItem[util.Buffer] `json:"-" yaml:"-"` // ADTS头
-	AVCC      util.BLL                    `json:"-" yaml:"-"` // 打包好的AVCC格式(MPEG-4格式、Byte-Stream Format)
-	RTP       util.List[RTPFrame]         `json:"-" yaml:"-"`
-	AUList    util.BLLs                   `json:"-" yaml:"-"` // 裸数据
+	Timestamp time.Duration       // 绝对时间戳
+	ADTS      util.LIBP           `json:"-" yaml:"-"` // ADTS头
+	AVCC      util.BLL            `json:"-" yaml:"-"` // 打包好的AVCC格式(MPEG-4格式、Byte-Stream Format)
+	RTP       util.List[RTPFrame] `json:"-" yaml:"-"`
+	AUList    util.BLLs           `json:"-" yaml:"-"` // 裸数据
 }
 
 func NewAVFrame() *AVFrame {
@@ -164,7 +164,7 @@ func (av *AVFrame) Reset() {
 	av.DataFrame.Reset()
 }
 
-func (av *AVFrame) Assign(source *AVFrame)  {
+func (av *AVFrame) Assign(source *AVFrame) {
 	av.IFrame = source.IFrame
 	av.PTS = source.PTS
 	av.DTS = source.DTS

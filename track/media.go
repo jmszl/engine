@@ -63,11 +63,11 @@ type SpesificTrack interface {
 	CompleteRTP(*AVFrame)
 	CompleteAVCC(*AVFrame)
 	WriteSliceBytes([]byte)
-	WriteRTPFrame(*util.ListItem[RTPFrame])
+	WriteRTPFrame(*LIRTP)
 	generateTimestamp(uint32)
 	WriteSequenceHead([]byte) error
 	writeAVCCFrame(uint32, *util.BLLReader, *util.BLL) error
-	GetNALU_SEI() *util.ListItem[util.Buffer]
+	GetNALU_SEI() util.LIBP
 	Flush()
 }
 
@@ -106,7 +106,7 @@ type Media struct {
 	流速控制
 }
 
-func (av *Media) GetFromPool(b util.IBytes) (item *util.ListItem[util.Buffer]) {
+func (av *Media) GetFromPool(b util.IBytes) (item util.LIBP) {
 	if b.Reuse() {
 		item = av.BytesPool.Get(b.Len())
 		copy(item.Value, b.Bytes())
@@ -116,7 +116,7 @@ func (av *Media) GetFromPool(b util.IBytes) (item *util.ListItem[util.Buffer]) {
 	return
 }
 
-func (av *Media) GetRTPFromPool() (result *util.ListItem[RTPFrame]) {
+func (av *Media) GetRTPFromPool() (result *LIRTP) {
 	result = av.RtpPool.Get()
 	if result.Value.Packet == nil {
 		result.Value.Packet = &rtp.Packet{}

@@ -30,7 +30,7 @@ func (opus *Opus) WriteAVCC(ts uint32, frame *util.BLL) error {
 	return errors.New("opus not support WriteAVCC")
 }
 
-func (opus *Opus) WriteRTPFrame(rtpItem *util.ListItem[RTPFrame]) {
+func (opus *Opus) WriteRTPFrame(rtpItem *LIRTP) {
 	frame := &rtpItem.Value
 	opus.Value.RTP.Push(rtpItem)
 	if opus.SampleRate != 90000 {

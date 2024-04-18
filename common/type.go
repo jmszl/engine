@@ -64,13 +64,13 @@ type AVTrack interface {
 	Attach()
 	Detach()
 	WriteAVCC(ts uint32, frame *util.BLL) error //写入AVCC格式的数据
-	WriteRTP(*util.ListItem[RTPFrame])
+	WriteRTP(*LIRTP)
 	WriteRTPPack(*rtp.Packet)
 	WriteSequenceHead(sh []byte) error
 	Flush()
 	SetSpeedLimit(time.Duration)
-	GetRTPFromPool() *util.ListItem[RTPFrame]
-	GetFromPool(util.IBytes) *util.ListItem[util.Buffer]
+	GetRTPFromPool() *LIRTP
+	GetFromPool(util.IBytes) util.LIBP
 }
 type VideoTrack interface {
 	AVTrack
