@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/logrusorgru/aurora/v4"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/yaml.v3"
@@ -76,7 +75,7 @@ func Run(ctx context.Context, conf any) (err error) {
 		log.Error("create dir .m7s error:", err)
 		return
 	}
-	log.Info("Ⓜ starting engine:", Blink(Engine.Version))
+	log.Info("starting engine:", Engine.Version)
 	if ConfigRaw != nil {
 		if err = yaml.Unmarshal(ConfigRaw, &cg); err != nil {
 			log.Error("parsing yml error:", err)
@@ -152,10 +151,11 @@ func Run(ctx context.Context, conf any) (err error) {
 		version = ver
 	}
 	if EngineConfig.LogLang == "zh" {
-		log.Info("monibuca ", version, Green(" 启动成功"))
+		log.Info("monibuca ", version, " 启动成功")
 	} else {
-		log.Info("monibuca ", version, Green(" start success"))
+		log.Info("monibuca ", version, " start success")
 	}
+
 	var enabledPlugins, disabledPlugins []*Plugin
 	for _, plugin := range plugins {
 		if plugin.Disabled {
@@ -164,22 +164,33 @@ func Run(ctx context.Context, conf any) (err error) {
 			enabledPlugins = append(enabledPlugins, plugin)
 		}
 	}
-	if EngineConfig.LogLang == "zh" {
-		fmt.Print("已运行的插件：")
-	} else {
-		fmt.Print("enabled plugins:")
+
+	{ // 打印启动插件
+		enabledPluginNames := make([]string, 0)
+		for _, plugin := range enabledPlugins {
+			enabledPluginNames = append(enabledPluginNames, plugin.Name)
+		}
+		enabledPluginNameStr := strings.Join(enabledPluginNames, "|")
+
+		if EngineConfig.LogLang == "zh" {
+			log.Info("已运行的插件：", enabledPluginNameStr)
+		} else {
+			log.Info("enabled plugins:", enabledPluginNameStr)
+		}
 	}
-	for _, plugin := range enabledPlugins {
-		fmt.Print(Colorize(" "+plugin.Name+" ", BlackFg|GreenBg|BoldFm), " ")
-	}
-	fmt.Println()
-	if EngineConfig.LogLang == "zh" {
-		fmt.Print("已禁用的插件：")
-	} else {
-		fmt.Print("disabled plugins:")
-	}
-	for _, plugin := range disabledPlugins {
-		fmt.Print(Colorize(" "+plugin.Name+" ", BlackFg|RedBg|CrossedOutFm), " ")
+
+	{ // 打印禁用插件
+		disabledPluginNames := make([]string, 0)
+		for _, plugin := range enabledPlugins {
+			disabledPluginNames = append(disabledPluginNames, plugin.Name)
+		}
+		disabledPluginNameStr := strings.Join(disabledPluginNames, "|")
+
+		if EngineConfig.LogLang == "zh" {
+			log.Info("已禁用的插件：", disabledPluginNameStr)
+		} else {
+			log.Info("disabled plugins:", disabledPluginNameStr)
+		}
 	}
 
 	for _, plugin := range enabledPlugins {

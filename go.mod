@@ -6,8 +6,6 @@ require (
 	github.com/bluenviron/gortsplib/v4 v4.6.2
 	github.com/bluenviron/mediacommon v1.5.1
 	github.com/deepch/vdk v0.0.27
-	github.com/google/uuid v1.4.0
-	github.com/logrusorgru/aurora/v4 v4.0.0
 	github.com/mcuadros/go-defaults v1.2.0
 	github.com/pion/rtp v1.8.3
 	github.com/pion/webrtc/v3 v3.2.20
@@ -21,7 +19,6 @@ require (
 )
 
 require (
-	github.com/denisbrodbeck/machineid v1.0.1
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-task/slim-sprig v0.0.0-20230315185526-52ccab3ef572 // indirect
 	github.com/golang/mock v1.6.0 // indirect

@@ -3,7 +3,6 @@ package mpegts
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 
 	"m7s.live/engine/v4/util"
@@ -208,9 +207,9 @@ func WritePATPacket(w io.Writer, tsHeader []byte, pat MpegTsPAT) (err error) {
 	PATPacket = append(PATPacket, bw.Bytes()...)
 	PATPacket = append(PATPacket, stuffingBytes...)
 
-	fmt.Println("-------------------------")
-	fmt.Println("Write PAT :", PATPacket)
-	fmt.Println("-------------------------")
+	//fmt.Println("-------------------------")
+	//fmt.Println("Write PAT :", PATPacket)
+	//fmt.Println("-------------------------")
 
 	// 写PAT负载
 	if _, err = w.Write(PATPacket); err != nil {

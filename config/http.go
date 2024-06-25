@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/logrusorgru/aurora/v4"
 	"golang.org/x/sync/errgroup"
 	"m7s.live/engine/v4/log"
 	"m7s.live/engine/v4/util"
@@ -74,9 +73,9 @@ func (config *HTTP) Listen(ctx context.Context) error {
 	if config.ListenAddrTLS != "" && (config == &Global.HTTP || config.ListenAddrTLS != Global.ListenAddrTLS) {
 		g.Go(func() error {
 			if Global.LogLang == "zh" {
-				log.Info("🌐 https 监听在 ", aurora.Blink(config.ListenAddrTLS))
+				log.Info("https 监听在 ", config.ListenAddrTLS)
 			} else {
-				log.Info("🌐 https listen at ", aurora.Blink(config.ListenAddrTLS))
+				log.Info("https listen at ", config.ListenAddrTLS)
 			}
 			cer, _ := tls.X509KeyPair(LocalCert, LocalKey)
 			var server = http.Server{
@@ -116,9 +115,9 @@ func (config *HTTP) Listen(ctx context.Context) error {
 	if config.ListenAddr != "" && (config == &Global.HTTP || config.ListenAddr != Global.ListenAddr) {
 		g.Go(func() error {
 			if Global.LogLang == "zh" {
-				log.Info("🌐 http 监听在 ", aurora.Blink(config.ListenAddr))
+				log.Info("http 监听在 ", config.ListenAddr)
 			} else {
-				log.Info("🌐 http listen at ", aurora.Blink(config.ListenAddr))
+				log.Info("http listen at ", config.ListenAddr)
 			}
 			var server = http.Server{
 				Addr:         config.ListenAddr,
