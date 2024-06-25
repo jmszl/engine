@@ -5,7 +5,8 @@ go 1.20
 require (
 	github.com/bluenviron/gortsplib/v4 v4.6.2
 	github.com/bluenviron/mediacommon v1.5.1
-	github.com/cnotch/ipchub v1.1.0
+	github.com/deepch/vdk v0.0.27
+	github.com/google/uuid v1.4.0
 	github.com/logrusorgru/aurora/v4 v4.0.0
 	github.com/mcuadros/go-defaults v1.2.0
 	github.com/pion/rtp v1.8.3
@@ -20,10 +21,11 @@ require (
 )
 
 require (
+	github.com/denisbrodbeck/machineid v1.0.1
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-task/slim-sprig v0.0.0-20230315185526-52ccab3ef572 // indirect
 	github.com/golang/mock v1.6.0 // indirect
-	github.com/google/pprof v0.0.0-20210407192527-94a9f03dee38 // indirect
+	github.com/google/pprof v0.0.0-20230309165930-d61513b1440d // indirect
 	github.com/lufia/plan9stats v0.0.0-20230326075908-cb1d2100619a // indirect
 	github.com/onsi/ginkgo/v2 v2.9.5 // indirect
 	github.com/pion/randutil v0.1.0 // indirect

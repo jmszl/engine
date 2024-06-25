@@ -2,7 +2,6 @@ package util
 
 import (
 	"sync/atomic"
-
 )
 
 type emptyLocker struct{}
@@ -13,37 +12,32 @@ func (emptyLocker) Unlock() {}
 var EmptyLocker emptyLocker
 
 type IDataFrame[T any] interface {
-	Init()               // 初始化
-	Reset()              // 重置数据,复用内存
-	Ready()              // 标记为可读取
-	ReaderEnter() int32  // 读取者数量+1
-	ReaderLeave() int32  // 读取者数量-1
-	StartWrite() bool    // 开始写入
-	SetSequence(uint32)  // 设置序号
-	GetSequence() uint32 // 获取序号
-	ReaderCount() int32  // 读取者数量
-	Discard() int32      // 如果写入时还有读取者没有离开则废弃该帧，剥离RingBuffer，防止并发读写
-	IsDiscarded() bool   // 是否已废弃
-	IsWriting() bool     // 是否正在写入
-	Wait()               // 阻塞等待可读取
-	Broadcast()          // 广播可读取
+	Reset()               // 重置数据,复用内存
+	Ready()               // 标记为可读取
+	ReaderEnter()         // 读取者数量+1
+	ReaderTryEnter() bool // 尝试读取
+	ReaderLeave()         // 读取者数量-1
+	StartWrite() bool     // 开始写入
+	SetSequence(uint32)   // 设置序号
+	GetSequence() uint32  // 获取序号
+	IsDiscarded() bool    // 是否已废弃
 }
 
 type RingWriter[T any, F IDataFrame[T]] struct {
-	*Ring[F] `json:"-" yaml:"-"`
-	ReaderCount   atomic.Int32 `json:"-" yaml:"-"`
-	pool          *Ring[F]
-	poolSize      int
-	Size          int
-	LastValue     F
-	constructor   func() F
+	*Ring[F]    `json:"-" yaml:"-"`
+	ReaderCount atomic.Int32 `json:"-" yaml:"-"`
+	pool        *Ring[F]
+	poolSize    int
+	Size        int
+	LastValue   F
+	constructor func() F
+	disposeFlag atomic.Int32
 }
 
 func (rb *RingWriter[T, F]) create(n int) (ring *Ring[F]) {
 	ring = NewRing[F](n)
 	for p, i := ring, n; i > 0; p, i = p.Next(), i-1 {
 		p.Value = rb.constructor()
-		p.Value.Init()
 	}
 	return
 }
@@ -53,14 +47,9 @@ func (rb *RingWriter[T, F]) Init(n int, constructor func() F) *RingWriter[T, F] 
 	rb.Ring = rb.create(n)
 	rb.Size = n
 	rb.LastValue = rb.Value
+	rb.Value.StartWrite()
 	return rb
 }
-
-// func (rb *RingBuffer[T, F]) MoveNext() F {
-// 	rb.LastValue = rb.Value
-// 	rb.Ring = rb.Next()
-// 	return rb.Value
-// }
 
 func (rb *RingWriter[T, F]) Glow(size int) (newItem *Ring[F]) {
 	if size < rb.poolSize {
@@ -80,10 +69,7 @@ func (rb *RingWriter[T, F]) Glow(size int) (newItem *Ring[F]) {
 	return
 }
 
-func (rb *RingWriter[T, F]) Recycle(r *Ring[F]) {
-	rb.poolSize++
-	r.Value.Init()
-	r.Value.Reset()
+func (rb *RingWriter[T, F]) recycle(r *Ring[F]) {
 	if rb.pool == nil {
 		rb.pool = r
 	} else {
@@ -92,27 +78,39 @@ func (rb *RingWriter[T, F]) Recycle(r *Ring[F]) {
 }
 
 func (rb *RingWriter[T, F]) Reduce(size int) {
-	r := rb.Unlink(size)
-	if size > 1 {
-		for p := r.Next(); p != r; {
-			next := p.Next() //先保存下一个节点
-			if p.Value.Discard() == 0 {
-				rb.Recycle(p.Prev().Unlink(1))
-			} else {
-				// fmt.Println("Reduce", p.Value.ReaderCount())
+	p := rb.Unlink(size)
+	pSize := size
+	for i := 0; i < size; i++ {
+		if p.Value.StartWrite() {
+			p.Value.Reset()
+			p.Value.Ready()
+			rb.poolSize++
+		} else {
+			p.Value.Reset()
+			if pSize == 1 {
+				return
 			}
-			p = next
+			p = p.Prev()
+			p.Unlink(1)
+			pSize--
 		}
+		p = p.Next()
 	}
-	if r.Value.Discard() == 0 {
-		rb.Recycle(r)
-	}
+	rb.recycle(p)
 	rb.Size -= size
-	return
+}
+
+func (rb *RingWriter[T, F]) Dispose() {
+	if rb.disposeFlag.Add(-2) == -2 {
+		rb.Value.Ready()
+	}
 }
 
 func (rb *RingWriter[T, F]) Step() (normal bool) {
-	rb.LastValue.Broadcast() // 防止订阅者还在等待
+	if !rb.disposeFlag.CompareAndSwap(0, 1) {
+		// already disposed
+		return
+	}
 	rb.LastValue = rb.Value
 	nextSeq := rb.LastValue.GetSequence() + 1
 	next := rb.Next()
@@ -122,10 +120,15 @@ func (rb *RingWriter[T, F]) Step() (normal bool) {
 	} else {
 		rb.Reduce(1)         //抛弃还有订阅者的节点
 		rb.Ring = rb.Glow(1) //补充一个新节点
-		rb.Value.StartWrite()
+		if !rb.Value.StartWrite() {
+			panic("can't start write")
+		}
 	}
 	rb.Value.SetSequence(nextSeq)
 	rb.LastValue.Ready()
+	if !rb.disposeFlag.CompareAndSwap(1, 0) {
+		rb.Value.Ready()
+	}
 	return
 }
 

@@ -7,6 +7,7 @@ import (
 
 type RingReader[T any, F util.IDataFrame[T]] struct {
 	*util.Ring[F]
+	locked bool
 	Count int // 读取的帧数
 }
 
@@ -15,13 +16,9 @@ func (r *RingReader[T, F]) StartRead(ring *util.Ring[F]) (err error) {
 	if r.Value.IsDiscarded() {
 		return ErrDiscard
 	}
-	if r.Value.IsWriting() {
-		// t := time.Now()
-		r.Value.Wait()
-		// log.Info("wait", time.Since(t))
-	}
-	r.Count++
 	r.Value.ReaderEnter()
+	r.locked = true
+	r.Count++
 	return
 }
 
@@ -33,13 +30,12 @@ func (r *RingReader[T, F]) TryRead() (f F, err error) {
 			err = ErrDiscard
 			return
 		}
-		if r.Next().Value.IsWriting() {
+		if !r.Next().Value.ReaderTryEnter() {
 			return
 		}
-		defer preValue.ReaderLeave()
 		r.Ring = r.Next()
 	} else {
-		if r.Value.IsWriting() {
+		if !r.Value.ReaderTryEnter()  {
 			return
 		}
 	}
@@ -49,8 +45,14 @@ func (r *RingReader[T, F]) TryRead() (f F, err error) {
 	}
 	r.Count++
 	f = r.Value
-	r.Value.ReaderEnter()
 	return
+}
+
+func (r *RingReader[T, F]) StopRead() {
+	if r.locked {
+		r.Value.ReaderLeave()
+		r.locked = false
+	}
 }
 
 func (r *RingReader[T, F]) ReadNext() (err error) {
@@ -58,14 +60,11 @@ func (r *RingReader[T, F]) ReadNext() (err error) {
 }
 
 func (r *RingReader[T, F]) Read(ring *util.Ring[F]) (err error) {
-	preValue := r.Value
-	defer preValue.ReaderLeave()
-	if preValue.IsDiscarded() {
-		return ErrDiscard
-	}
+	r.StopRead()
 	return r.StartRead(ring)
 }
 
 type DataReader[T any] struct {
 	RingReader[T, *common.DataFrame[T]]
 }
+

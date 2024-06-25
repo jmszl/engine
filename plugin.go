@@ -302,6 +302,9 @@ func (opt *Plugin) Pull(streamPath string, url string, puller IPuller, save int)
 			m[id] = pullConf.PullOnSub[id]
 		}
 		m[streamPath] = url
+		if pullConf.PullOnSub == nil {
+			pullConf.PullOnSub = make(map[string]string)
+		}
 		pullConf.PullOnSub[streamPath] = url
 		opt.RawConfig.ParseModifyFile(map[string]any{
 			"pull": map[string]any{

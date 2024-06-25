@@ -85,6 +85,3 @@ func (bt *Base[T, F]) GetPublisher() common.IPuber {
 	return bt.Publisher
 }
 
-func (bt *Base[T, F]) Dispose() {
-	bt.Value.Broadcast()
-}

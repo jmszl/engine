@@ -3,8 +3,7 @@ package codec
 import (
 	"bytes"
 
-	"github.com/cnotch/ipchub/av/codec/hevc"
-
+	"github.com/deepch/vdk/codec/h265parser"
 	"m7s.live/engine/v4/util/bits"
 )
 
@@ -217,11 +216,13 @@ func ParseSPS(data []byte) (self SPSInfo, err error) {
 }
 
 func ParseHevcSPS(data []byte) (self SPSInfo, err error) {
-	var rawsps hevc.H265RawSPS
-	if err = rawsps.Decode(data); err == nil {
-		self.CropLeft, self.CropRight, self.CropTop, self.CropBottom = uint(rawsps.Conf_win_left_offset), uint(rawsps.Conf_win_right_offset), uint(rawsps.Conf_win_top_offset), uint(rawsps.Conf_win_bottom_offset)
-		self.Width = uint(rawsps.Pic_width_in_luma_samples)
-		self.Height = uint(rawsps.Pic_height_in_luma_samples)
+	var rawsps h265parser.SPSInfo
+	if rawsps, err = h265parser.ParseSPS(data); err == nil {
+		self.CropLeft, self.CropRight, self.CropTop, self.CropBottom = uint(rawsps.CropLeft), uint(rawsps.CropRight), uint(rawsps.CropTop), uint(rawsps.CropBottom)
+		self.ProfileIdc, self.LevelIdc = rawsps.ProfileIdc, rawsps.LevelIdc
+		self.MbWidth, self.MbHeight = rawsps.MbWidth, rawsps.MbHeight
+		self.Width = uint(rawsps.Width)
+		self.Height = uint(rawsps.Height)
 	}
 	return
 }

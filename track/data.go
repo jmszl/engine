@@ -44,7 +44,7 @@ func (d *Data[T]) Play(ctx context.Context, onData func(*DataFrame[T]) error) (e
 			err = ctx.Err()
 		}
 		if err != nil {
-			reader.Value.ReaderLeave()
+			reader.StopRead()
 			return
 		}
 	}

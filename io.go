@@ -100,7 +100,7 @@ func (io *IO) IsShutdown() bool {
 
 func (i *IO) close(err StopError) bool {
 	if i.IsClosed() {
-		i.Warn("already closed", err...)
+		i.Debug("already closed", err...)
 		return false
 	}
 	i.Info("close", err...)
@@ -138,12 +138,30 @@ var (
 
 func (io *IO) auth(key string, secret string, expire string) bool {
 	if unixTime, err := strconv.ParseInt(expire, 16, 64); err != nil || time.Now().Unix() > unixTime {
+		if EngineConfig.LogLang == "zh" {
+			log.Error("鉴权失败，时间戳过期了", zap.String("expire", expire))
+		} else {
+			log.Error("auth failed expired", zap.String("expire", expire))
+		}
+		return false
+	}
+	if len(secret) != 32 {
+		if EngineConfig.LogLang == "zh" {
+			log.Error("鉴权失败,密文应该是32位长度", zap.String("secret", secret))
+		} else {
+			log.Error("auth failed secret length must be 32", zap.String("secret", secret))
+		}
 		return false
 	}
 	trueSecret := md5.Sum([]byte(key + io.Stream.Path + expire))
 	for i := 0; i < 16; i++ {
 		hex, err := strconv.ParseInt(secret[i<<1:(i<<1)+2], 16, 16)
 		if trueSecret[i] != byte(hex) || err != nil {
+			if EngineConfig.LogLang == "zh" {
+				log.Error("鉴权失败,密文不匹配", zap.String("secret", secret))
+			} else {
+				log.Error("auth failed invalid secret ", zap.String("secret", secret))
+			}
 			return false
 		}
 	}

@@ -100,7 +100,7 @@ func (config *Config) MarshalJSON() ([]byte, error) {
 	return json.Marshal(config.propsMap)
 }
 
-func (config *Config) GetValue() any{
+func (config *Config) GetValue() any {
 	return config.Ptr.Interface()
 }
 
@@ -116,6 +116,12 @@ func (config *Config) Parse(s any, prefix ...string) {
 	if t.Kind() == reflect.Pointer {
 		t, v = t.Elem(), v.Elem()
 	}
+
+	//如果是指针类型判断是否是空指针 如果是空指针 直接跳过
+	if v.Kind() == reflect.Invalid {
+		return
+	}
+
 	config.Ptr = v
 	config.Default = v.Interface()
 	if len(prefix) > 0 { // 读取环境变量

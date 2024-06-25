@@ -33,7 +33,7 @@ var engineConfig = zapcore.EncoderConfig{
 }
 var LogLevel = zap.NewAtomicLevelAt(zap.DebugLevel)
 var Trace bool
-var logger *zap.Logger = zap.New(
+var logger = zap.New(
 	zapcore.NewCore(zapcore.NewJSONEncoder(engineConfig), zapcore.AddSync(multipleWriter), LogLevel),
 )
 var sugaredLogger *zap.SugaredLogger = logger.Sugar()

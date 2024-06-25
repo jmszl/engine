@@ -5,7 +5,6 @@ import (
 	"io"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pion/rtp"
@@ -21,6 +20,9 @@ func SplitAnnexB[T ~[]byte](frame T, process func(T), delimiter []byte) {
 		}
 	}
 }
+
+const rwmutexMaxReaders = 1 << 30
+
 type LIRTP = util.ListItem[RTPFrame]
 type RTPFrame struct {
 	*rtp.Packet
@@ -46,30 +48,21 @@ func (r *RTPFrame) Unmarshal(raw []byte) *RTPFrame {
 }
 
 type DataFrame[T any] struct {
-	DeltaTime   uint32       // 相对上一帧时间戳，毫秒
-	WriteTime   time.Time    // 写入时间,可用于比较两个帧的先后
-	Sequence    uint32       // 在一个Track中的序号
-	BytesIn     int          // 输入字节数用于计算BPS
-	CanRead     bool         `json:"-" yaml:"-"` // 是否可读取
-	readerCount atomic.Int32 `json:"-" yaml:"-"` // 读取者数量
-	Data        T            `json:"-" yaml:"-"`
-	sync.Cond   `json:"-" yaml:"-"`
+	DeltaTime uint32    // 相对上一帧时间戳，毫秒
+	WriteTime time.Time // 写入时间,可用于比较两个帧的先后
+	Sequence  uint32    // 在一个Track中的序号
+	BytesIn   int       // 输入字节数用于计算BPS
+	Data      T         `json:"-" yaml:"-"`
+	lock      sync.RWMutex
+	discard   bool
 }
 
 func NewDataFrame[T any]() *DataFrame[T] {
 	return &DataFrame[T]{}
 }
-func (df *DataFrame[T]) IsWriting() bool {
-	return !df.CanRead
-}
 
 func (df *DataFrame[T]) IsDiscarded() bool {
-	return df.L == nil
-}
-
-func (df *DataFrame[T]) Discard() int32 {
-	df.L = nil //标记为废弃
-	return df.readerCount.Load()
+	return df.discard
 }
 
 func (df *DataFrame[T]) SetSequence(sequence uint32) {
@@ -80,36 +73,29 @@ func (df *DataFrame[T]) GetSequence() uint32 {
 	return df.Sequence
 }
 
-func (df *DataFrame[T]) ReaderEnter() int32 {
-	return df.readerCount.Add(1)
+func (df *DataFrame[T]) ReaderEnter() {
+	df.lock.RLock()
 }
 
-func (df *DataFrame[T]) ReaderCount() int32 {
-	return df.readerCount.Load()
+func (df *DataFrame[T]) ReaderTryEnter() bool {
+	return df.lock.TryRLock()
 }
 
-func (df *DataFrame[T]) ReaderLeave() int32 {
-	return df.readerCount.Add(-1)
+func (df *DataFrame[T]) ReaderLeave() {
+	df.lock.RUnlock()
 }
 
-func (df *DataFrame[T]) StartWrite() bool {
-	if df.readerCount.Load() > 0 {
-		df.Discard() //标记为废弃
-		return false
-	} else {
-		df.CanRead = false //标记为正在写入
-		return true
+func (df *DataFrame[T]) StartWrite() (ok bool) {
+	ok = df.lock.TryLock()
+	if !ok {
+		df.discard = true
 	}
+	return
 }
 
 func (df *DataFrame[T]) Ready() {
 	df.WriteTime = time.Now()
-	df.CanRead = true //标记为可读取
-	df.Broadcast()
-}
-
-func (df *DataFrame[T]) Init() {
-	df.L = util.EmptyLocker
+	df.lock.Unlock()
 }
 
 func (df *DataFrame[T]) Reset() {
