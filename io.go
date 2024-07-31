@@ -229,6 +229,9 @@ func (io *IO) receive(streamPath string, specific common.IIO) error {
 	if !isSubscribe {
 		puber := iPub.GetPublisher()
 		conf := puber.Config
+		if io.Args.Get("bufferTime") != "" {
+			conf.BufferTime, _ = time.ParseDuration(io.Args.Get("bufferTime"))
+		}
 		io.Info("publish", zap.String("ptr", fmt.Sprintf("%p", iPub)))
 		s.pubLocker.Lock()
 		defer s.pubLocker.Unlock()

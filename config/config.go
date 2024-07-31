@@ -106,6 +106,7 @@ func (config *Config) GetValue() any {
 
 // Parse 第一步读取配置结构体的默认值
 func (config *Config) Parse(s any, prefix ...string) {
+	// 获取输入值的类型和值的反射对象
 	var t reflect.Type
 	var v reflect.Value
 	if vv, ok := s.(reflect.Value); ok {
@@ -113,6 +114,7 @@ func (config *Config) Parse(s any, prefix ...string) {
 	} else {
 		t, v = reflect.TypeOf(s), reflect.ValueOf(s)
 	}
+	// 如果是指针类型，则获取指针指向的元素
 	if t.Kind() == reflect.Pointer {
 		t, v = t.Elem(), v.Elem()
 	}
@@ -122,9 +124,11 @@ func (config *Config) Parse(s any, prefix ...string) {
 		return
 	}
 
+	// 设置配置的指针和默认值
 	config.Ptr = v
 	config.Default = v.Interface()
-	if len(prefix) > 0 { // 读取环境变量
+	// 如果有前缀，尝试读取环境变量
+	if len(prefix) > 0 {
 		envKey := strings.Join(prefix, "_")
 		if envValue := os.Getenv(envKey); envValue != "" {
 			envv := config.assign(strings.ToLower(prefix[0]), envValue)
@@ -132,12 +136,15 @@ func (config *Config) Parse(s any, prefix ...string) {
 			config.Ptr.Set(envv)
 		}
 	}
+	// 如果类型是结构体且不是regexpType，则遍历字段
 	if t.Kind() == reflect.Struct && t != regexpType {
 		for i, j := 0, t.NumField(); i < j; i++ {
 			ft, fv := t.Field(i), v.Field(i)
+			// 如果字段未导出，则跳过
 			if !ft.IsExported() {
 				continue
 			}
+			// 获取字段的名称，优先使用yaml标签中的名称
 			name := strings.ToLower(ft.Name)
 			if tag := ft.Tag.Get("yaml"); tag != "" {
 				if tag == "-" {
@@ -145,9 +152,11 @@ func (config *Config) Parse(s any, prefix ...string) {
 				}
 				name, _, _ = strings.Cut(tag, ",")
 			}
+			// 获取配置属性并解析字段值
 			prop := config.Get(name)
 			prop.Parse(fv, append(prefix, strings.ToUpper(ft.Name))...)
 			prop.tag = ft.Tag
+			// 处理枚举类型的字段
 			for _, kv := range strings.Split(ft.Tag.Get("enum"), ",") {
 				kvs := strings.Split(kv, ":")
 				if len(kvs) != 2 {
