@@ -151,10 +151,8 @@ func (amf *AMF) Unmarshal() (obj any, err error) {
 	case AMF0_UNDEFINED:
 		return Undefined, nil
 	case AMF0_ECMA_ARRAY:
-		size := amf.ReadUint32()
-		m := make(EcmaArray)
-		for i := uint32(0); i < size && err == nil && obj == nil; i++ {
-			obj, err = amf.readProperty(m)
+		_ = amf.ReadUint32()
+		for m := make(EcmaArray); err == nil && obj == nil; obj, err = amf.readProperty(m) {
 		}
 	case AMF0_END_OBJECT:
 		return ObjectEnd, nil
