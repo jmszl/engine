@@ -181,7 +181,7 @@ func Run(ctx context.Context, conf any) (err error) {
 
 	{ // 打印禁用插件
 		disabledPluginNames := make([]string, 0)
-		for _, plugin := range enabledPlugins {
+		for _, plugin := range disabledPlugins {
 			disabledPluginNames = append(disabledPluginNames, plugin.Name)
 		}
 		disabledPluginNameStr := strings.Join(disabledPluginNames, "|")

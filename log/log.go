@@ -12,7 +12,7 @@ import (
 
 var engineConfig = zapcore.EncoderConfig{
 	// Keys can be anything except the empty string.
-	TimeKey:        "T",
+	//TimeKey:        "T",
 	LevelKey:       "L",
 	NameKey:        "N",
 	CallerKey:      "C",
