@@ -294,6 +294,11 @@ func findOrCreateStream(streamPath string, waitTimeout time.Duration) (s *Stream
 	}
 }
 
+func (r *Stream) resetTimer(dur time.Duration) {
+		r.Debug("reset timer", zap.Duration("timeout", dur))
+		r.timeout.Reset(dur)
+}
+
 func (r *Stream) action(action StreamAction) (ok bool) {
 	var event StateEvent
 	event.Target = r
@@ -326,7 +331,7 @@ func (r *Stream) action(action StreamAction) (ok bool) {
 			} else if waitTime == 0 {
 				waitTime = time.Millisecond * 10 //没有订阅者也没有配置发布者等待重连时间，默认10ms后关闭流
 			}
-			r.timeout.Reset(waitTime)
+			r.resetTimer(waitTime)
 			r.Debug("wait publisher", zap.Duration("wait timeout", waitTime))
 		case STATE_WAITTRACK:
 			if len(r.SEHistory) > 1 {
@@ -334,7 +339,7 @@ func (r *Stream) action(action StreamAction) (ok bool) {
 			} else {
 				stateEvent = SEpublish{event}
 			}
-			r.timeout.Reset(time.Second * 5) // 5秒心跳，检测track的存活度
+			r.resetTimer(time.Second * 5) // 5秒心跳，检测track的存活度
 		case STATE_PUBLISHING:
 			stateEvent = SEtrackAvaliable{event}
 			r.Subscribers.SendInviteTrack(r)
@@ -342,13 +347,13 @@ func (r *Stream) action(action StreamAction) (ok bool) {
 			if puller, ok := r.Publisher.(IPuller); ok {
 				puller.OnConnected()
 			}
-			r.timeout.Reset(time.Second * 5) // 5秒心跳，检测track的存活度
+			r.resetTimer(time.Second * 5) // 5秒心跳，检测track的存活度
 		case STATE_WAITCLOSE:
 			stateEvent = SEwaitClose{event}
 			if r.IdleTimeout > 0 {
-				r.timeout.Reset(r.IdleTimeout)
+				r.resetTimer(r.IdleTimeout)
 			} else {
-				r.timeout.Reset(r.DelayCloseTimeout)
+				r.resetTimer(r.DelayCloseTimeout)
 			}
 		case STATE_CLOSED:
 			Streams.Delete(r.Path)
@@ -422,7 +427,7 @@ func (s *Stream) onSuberClose(sub ISubscriber) {
 	if s.Publisher != nil {
 		s.Publisher.OnEvent(sub) // 通知Publisher有订阅者离开，在回调中可以去获取订阅者数量
 	}
-	if (s.DelayCloseTimeout > 0 || s.IdleTimeout > 0) && s.Subscribers.Len() == 0 {
+	if (s.DelayCloseTimeout > 0 || s.IdleTimeout > 0) && s.Subscribers.Len() == 0 && !sub.GetSubscriber().Config.Internal {
 		s.action(ACTION_LASTLEAVE)
 	}
 }
@@ -486,16 +491,10 @@ func (s *Stream) run() {
 							s.Warn("no tracks")
 							if time.Since(s.StartTime) > timeout {
 								lost = true
-								s.action(ACTION_CLOSE)
-								continue
 							}
 						} else if s.Publisher != nil && s.Publisher.IsClosed() {
 							s.Warn("publish is closed", zap.Error(context.Cause(s.publisher)), zap.String("ptr", fmt.Sprintf("%p", s.publisher.Context)))
 							lost = true
-							if len(s.Tracks.Audio)+len(s.Tracks.Video) == 0 {
-								s.action(ACTION_CLOSE)
-								continue
-							}
 						}
 					}
 					if lost {
@@ -507,11 +506,14 @@ func (s *Stream) run() {
 						continue
 					}
 				}
-				if s.State == STATE_WAITTRACK {
-					s.action(ACTION_TRACKAVAILABLE)
+				switch s.State {
+				case STATE_WAITTRACK:
+						s.action(ACTION_TRACKAVAILABLE)
+				case STATE_WAITCLOSE:
+					continue
 				}
 				s.Subscribers.AbortWait()
-				s.timeout.Reset(time.Second * 5)
+				s.resetTimer(time.Second * 5)
 			} else {
 				s.Debug("timeout", timeOutInfo)
 				s.action(ACTION_TIMEOUT)

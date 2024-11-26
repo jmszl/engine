@@ -80,24 +80,26 @@ func (rb *RingWriter[T, F]) recycle(r *Ring[F]) {
 func (rb *RingWriter[T, F]) Reduce(size int) {
 	p := rb.Unlink(size)
 	pSize := size
+	rb.Size -= size
+	// 遍历即将回收的节点，如果有读锁未释放，则丢弃，不回收该节点
 	for i := 0; i < size; i++ {
-		if p.Value.StartWrite() {
+		if !p.Value.IsDiscarded() && p.Value.StartWrite() { // 尝试加写锁，成功则说明该节点可正常回收
 			p.Value.Reset()
 			p.Value.Ready()
 			rb.poolSize++
 		} else {
 			p.Value.Reset()
 			if pSize == 1 {
+				// last one，无法删除最后一个节点，直接返回即可（不回收）
 				return
 			}
 			p = p.Prev()
-			p.Unlink(1)
+			p.Unlink(1) // 丢弃该节点,不回收
 			pSize--
 		}
 		p = p.Next()
 	}
 	rb.recycle(p)
-	rb.Size -= size
 }
 
 func (rb *RingWriter[T, F]) Dispose() {

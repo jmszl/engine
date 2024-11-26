@@ -168,16 +168,28 @@ func (s *Subscriber) CreateTrackReader(t *track.Media) (result *track.AVRingRead
 func (s *Subscriber) AddTrack(t Track) bool {
 	switch v := t.(type) {
 	case *track.Video:
-		if s.VideoReader != nil || !s.Config.SubVideo {
+		if !s.Config.SubVideo {
 			return false
+		}
+		var startTs time.Duration
+		if s.VideoReader != nil {
+			startTs = time.Duration(s.VideoReader.AbsTime) * time.Millisecond
+			s.VideoReader.StopRead()
 		}
 		s.VideoReader = s.CreateTrackReader(&v.Media)
+		s.VideoReader.StartTs = startTs
 		s.Video = v
 	case *track.Audio:
-		if s.AudioReader != nil || !s.Config.SubAudio {
+		if !s.Config.SubAudio {
 			return false
 		}
+		var startTs time.Duration
+		if s.AudioReader != nil {
+			startTs = time.Duration(s.AudioReader.AbsTime) * time.Millisecond
+			s.AudioReader.StopRead()
+		}
 		s.AudioReader = s.CreateTrackReader(&v.Media)
+		s.AudioReader.StartTs = startTs
 		s.Audio = v
 	default:
 		return false

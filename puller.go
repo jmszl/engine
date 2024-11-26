@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"io"
 	"strings"
 	"time"
 
@@ -40,7 +39,7 @@ func (pub *Puller) Reconnect() (ok bool) {
 }
 
 func (pub *Puller) startPull(puller IPuller) {
-	badPuller := true
+	// badPuller := true
 	var stream *Stream
 	var err error
 	streamPath := pub.StreamPath
@@ -75,18 +74,18 @@ func (pub *Puller) startPull(puller IPuller) {
 		}
 		startTime = time.Now()
 		if err = puller.Connect(); err != nil {
-			if err == io.EOF {
-				puller.Info("pull complete")
-				return
-			}
+			// if err == io.EOF {
+			// 	puller.Info("pull complete")
+			// 	return
+			// }
 			puller.Error("pull connect", zap.Error(err))
-			if badPuller {
-				return
-			}
+			// if badPuller {
+			// 	return
+			// }
 		} else {
 			if err = puller.Publish(pub.StreamPath, puller); err != nil {
 				puller.Error("pull publish", zap.Error(err))
-				return
+				continue
 			}
 			if stream != puber.Stream {
 				// 老流中的音视频轨道不可再使用
@@ -94,7 +93,7 @@ func (pub *Puller) startPull(puller IPuller) {
 				puber.VideoTrack = nil
 			}
 			stream = puber.Stream
-			badPuller = false
+			// badPuller = false
 			if err = puller.Pull(); err != nil && !puller.IsShutdown() {
 				puller.Error("pull interrupt", zap.Error(err))
 			}
