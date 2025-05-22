@@ -3,8 +3,6 @@
 package util
 
 import (
-	"log"
-	"os"
 	"syscall"
 )
 
@@ -26,13 +24,13 @@ func setStdHandle(stdhandle int32, handle syscall.Handle) error {
 
 // redirectStderr to the file passed in
 func init() {
-	logFile := initFatalLog()
-	if logFile != nil {
-		err := setStdHandle(syscall.STD_ERROR_HANDLE, syscall.Handle(logFile.Fd()))
-		if err != nil {
-			log.Fatalf("Failed to redirect stderr to file: %v", err)
-		}
-		// SetStdHandle does not affect prior references to stderr
-		os.Stderr = logFile
-	}
+	//logFile := initFatalLog()
+	//if logFile != nil {
+	//	err := setStdHandle(syscall.STD_ERROR_HANDLE, syscall.Handle(logFile.Fd()))
+	//	if err != nil {
+	//		log.Fatalf("Failed to redirect stderr to file: %v", err)
+	//	}
+	//	// SetStdHandle does not affect prior references to stderr
+	//	os.Stderr = logFile
+	//}
 }

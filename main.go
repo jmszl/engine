@@ -67,9 +67,9 @@ func Run(ctx context.Context, conf any) (err error) {
 		cg = v
 	}
 
-	if err = util.CreateShutdownScript(); err != nil {
-		log.Error("create shutdown script error:", err)
-	}
+	//if err = util.CreateShutdownScript(); err != nil {
+	//	log.Error("create shutdown script error:", err)
+	//}
 
 	if err = os.MkdirAll(SettingDir, 0766); err != nil {
 		log.Error("create dir .m7s error:", err)
